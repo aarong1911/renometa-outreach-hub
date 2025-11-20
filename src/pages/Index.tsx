@@ -2,13 +2,15 @@ import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, User } from "firebase/auth";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc } from "firebase/firestore";
-import { LayoutDashboard, Mail, Users, Megaphone, Network, Loader2, Plus, Trash2, Play, Pause } from "lucide-react";
+import { LayoutDashboard, Mail, Users, Megaphone, Radio, Loader2, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
+import logo from '@/assets/logo.png';
 
 // Firebase global variables (normally injected by backend)
 declare global {
@@ -64,6 +66,7 @@ const Index = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [appId, setAppId] = useState<string>("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   
   // Firestore leads state
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -109,55 +112,61 @@ const Index = () => {
       } catch (error) {
         console.error("Firebase initialization error:", error);
         setLoading(false);
-        toast.error("Authentication failed - using demo mode");
       }
     };
 
     initFirebase();
   }, []);
 
-  // Listen to Firestore leads in real-time
+  // Fetch Firestore leads in real-time
   useEffect(() => {
-    if (!user) return;
+    if (!user || !appId) return;
 
-    try {
-      const db = getFirestore();
-      const leadsPath = `artifacts/${appId}/users/${user.uid}/leads`;
-      const leadsRef = collection(db, leadsPath);
+    const db = getFirestore();
+    const leadsPath = `artifacts/${appId}/users/${user.uid}/leads`;
+    const leadsCollection = collection(db, leadsPath);
 
-      const unsubscribe = onSnapshot(leadsRef, (snapshot) => {
-        const fetchedLeads: Lead[] = [];
-        snapshot.forEach((doc) => {
-          fetchedLeads.push({ id: doc.id, ...doc.data() } as Lead);
-        });
+    const unsubscribe = onSnapshot(
+      leadsCollection,
+      (snapshot) => {
+        const fetchedLeads: Lead[] = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as Lead[];
         setLeads(fetchedLeads);
-      });
+      },
+      (error) => {
+        console.error("Error fetching leads:", error);
+        toast.error("Failed to load leads");
+      }
+    );
 
-      return () => unsubscribe();
-    } catch (error) {
-      console.error("Error setting up Firestore listener:", error);
-    }
+    return () => unsubscribe();
   }, [user, appId]);
 
-  // Add lead to Firestore
-  const handleAddLead = async () => {
-    if (!user || !newLeadName || !newLeadEmail) {
-      toast.error("Please fill in name and email");
+  // Add a new lead to Firestore
+  const addLead = async () => {
+    if (!user || !appId) {
+      toast.error("Authentication required");
+      return;
+    }
+    if (!newLeadName.trim() || !newLeadEmail.trim()) {
+      toast.error("Name and email are required");
       return;
     }
 
     try {
       const db = getFirestore();
       const leadsPath = `artifacts/${appId}/users/${user.uid}/leads`;
-      const leadsRef = collection(db, leadsPath);
+      const leadsCollection = collection(db, leadsPath);
       
-      await addDoc(leadsRef, {
+      await addDoc(leadsCollection, {
         name: newLeadName,
         email: newLeadEmail,
-        company: newLeadCompany || "",
+        company: newLeadCompany,
         timestamp: new Date(),
       });
-
+      
       setNewLeadName("");
       setNewLeadEmail("");
       setNewLeadCompany("");
@@ -168,16 +177,15 @@ const Index = () => {
     }
   };
 
-  // Delete lead from Firestore
-  const handleDeleteLead = async (leadId: string) => {
-    if (!user) return;
+  // Delete a lead from Firestore
+  const deleteLead = async (leadId: string) => {
+    if (!user || !appId) return;
 
     try {
       const db = getFirestore();
       const leadsPath = `artifacts/${appId}/users/${user.uid}/leads`;
-      const leadRef = doc(db, leadsPath, leadId);
-      
-      await deleteDoc(leadRef);
+      const leadDoc = doc(db, leadsPath, leadId);
+      await deleteDoc(leadDoc);
       toast.success("Lead deleted");
     } catch (error) {
       console.error("Error deleting lead:", error);
@@ -185,10 +193,10 @@ const Index = () => {
     }
   };
 
-  // Add campaign (simulated)
-  const handleAddCampaign = () => {
-    if (!newCampaignName) {
-      toast.error("Please enter campaign name");
+  // Add a new campaign (mock state)
+  const addCampaign = () => {
+    if (!newCampaignName.trim()) {
+      toast.error("Campaign name is required");
       return;
     }
 
@@ -200,7 +208,6 @@ const Index = () => {
       opened: 0,
       replied: 0,
     };
-
     setCampaigns([...campaigns, newCampaign]);
     setNewCampaignName("");
     toast.success("Campaign created");
@@ -208,428 +215,387 @@ const Index = () => {
 
   // Toggle campaign status
   const toggleCampaignStatus = (id: number) => {
-    setCampaigns(campaigns.map(c => {
-      if (c.id === id) {
-        const newStatus = c.status === "Running" ? "Paused" : "Running";
-        return { ...c, status: newStatus };
-      }
-      return c;
-    }));
+    setCampaigns(
+      campaigns.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              status:
+                c.status === "Running"
+                  ? "Paused"
+                  : c.status === "Paused"
+                  ? "Draft"
+                  : "Running",
+            }
+          : c
+      )
+    );
   };
 
-  // Toggle warmup
-  const toggleWarmup = (id: number) => {
-    setWarmupAccounts(warmupAccounts.map(acc => {
-      if (acc.id === id) {
-        return { ...acc, warmupEnabled: !acc.warmupEnabled };
-      }
-      return acc;
-    }));
-    toast.success("Warmup status updated");
+  // Toggle warmup status
+  const toggleWarmup = (email: string) => {
+    setWarmupAccounts(
+      warmupAccounts.map((acc) =>
+        acc.email === email ? { ...acc, warmupEnabled: !acc.warmupEnabled } : acc
+      )
+    );
   };
+
+  const Sidebar = () => {
+    const menuItems = [
+      { id: 'dashboard' as Tab, label: 'Dashboard', icon: LayoutDashboard },
+      { id: 'infrastructure' as Tab, label: 'Infrastructure', icon: Mail },
+      { id: 'leads' as Tab, label: 'Leads & Prospects', icon: Users },
+      { id: 'campaigns' as Tab, label: 'Campaigns', icon: Megaphone },
+      { id: 'warmup' as Tab, label: 'Warmup Network', icon: Radio },
+    ];
+
+    return (
+      <div className={`${sidebarCollapsed ? 'w-16' : 'w-64'} bg-slate-950 text-white flex flex-col h-screen transition-all duration-300`}>
+        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+          {!sidebarCollapsed && (
+            <div className="flex items-center gap-3">
+              <img src={logo} alt="RenoMeta" className="w-8 h-8" />
+              <div>
+                <h1 className="text-xl font-bold text-[#d9ab57]">RenoMeta</h1>
+                <p className="text-xs text-slate-400">Outreach Manager</p>
+              </div>
+            </div>
+          )}
+          {sidebarCollapsed && (
+            <img src={logo} alt="RenoMeta" className="w-8 h-8 mx-auto" />
+          )}
+        </div>
+        <button
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          className="p-2 mx-2 mt-2 rounded-md hover:bg-slate-800 transition-colors flex items-center justify-center"
+        >
+          <ChevronRight className={`w-5 h-5 transition-transform ${!sidebarCollapsed ? 'rotate-180' : ''}`} />
+        </button>
+        <nav className="flex-1 p-2 mt-2">
+          {menuItems.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg mb-2 transition-colors ${
+                  activeTab === tab.id
+                    ? 'bg-[#d9ab57] text-white'
+                    : 'text-slate-200 hover:bg-slate-800'
+                }`}
+                title={sidebarCollapsed ? tab.label : undefined}
+              >
+                <Icon className="w-5 h-5 flex-shrink-0" />
+                {!sidebarCollapsed && <span className="text-sm font-medium">{tab.label}</span>}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+    );
+  };
+
+  const DashboardView = () => {
+    const fleetUtilization = Math.round(
+      (accounts.reduce((sum, acc) => sum + acc.dailyUsage, 0) /
+        accounts.reduce((sum, acc) => sum + acc.dailyLimit, 0)) *
+        100
+    );
+    const warmupCount = warmupAccounts.filter((a) => a.warmupEnabled).length;
+    const runningCampaigns = campaigns.filter((c) => c.status === "Running").length;
+
+    return (
+      <div>
+        <h2 className="text-3xl font-bold text-slate-800 mb-6">Dashboard Overview</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Fleet Utilization</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-4xl font-bold text-[#d9ab57]">{fleetUtilization}%</div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Warmup Accounts</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-4xl font-bold text-[#d9ab57]">{warmupCount}</div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Running Campaigns</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-4xl font-bold text-[#d9ab57]">{runningCampaigns}</div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  };
+
+  const InfrastructureView = () => (
+    <div>
+      <h2 className="text-3xl font-bold text-slate-800 mb-6">Email Infrastructure</h2>
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <table className="min-w-full divide-y divide-slate-200">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Email</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Provider</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">DNS Status</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Daily Usage</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-slate-200">
+            {accounts.map((account) => (
+              <tr key={account.id}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-800">{account.email}</td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <Badge variant="secondary">{account.provider}</Badge>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="flex gap-2">
+                    <Badge variant={account.spf === "OK" ? "default" : "destructive"}>SPF: {account.spf}</Badge>
+                    <Badge variant={account.dkim === "OK" ? "default" : "destructive"}>DKIM: {account.dkim}</Badge>
+                  </div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="flex items-center gap-2">
+                    <Progress value={(account.dailyUsage / account.dailyLimit) * 100} className="w-24" />
+                    <span className="text-sm text-slate-600">
+                      {account.dailyUsage}/{account.dailyLimit}
+                    </span>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-6 text-xs text-slate-500">
+        <p>User ID: {user?.uid || "Not authenticated"}</p>
+        <p>App ID: {appId}</p>
+      </div>
+    </div>
+  );
+
+  const LeadsView = () => (
+    <div>
+      <h2 className="text-3xl font-bold text-slate-800 mb-6">Leads & Prospects</h2>
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Add New Lead</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <Label htmlFor="lead-name" className="mb-1 block">Name</Label>
+              <Input
+                id="lead-name"
+                placeholder="Name"
+                value={newLeadName}
+                onChange={(e) => setNewLeadName(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="lead-email" className="mb-1 block">Email</Label>
+              <Input
+                id="lead-email"
+                type="email"
+                placeholder="Email"
+                value={newLeadEmail}
+                onChange={(e) => setNewLeadEmail(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="lead-company" className="mb-1 block">Company</Label>
+              <Input
+                id="lead-company"
+                placeholder="Company (optional)"
+                value={newLeadCompany}
+                onChange={(e) => setNewLeadCompany(e.target.value)}
+              />
+            </div>
+            <div className="flex items-end">
+              <Button onClick={addLead} className="w-full bg-blue-600 hover:bg-blue-700">
+                Add Lead
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <table className="min-w-full divide-y divide-slate-200">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Email</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Company</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-slate-200">
+            {leads.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-6 py-8 text-center text-slate-500">
+                  No leads yet. Add your first lead above!
+                </td>
+              </tr>
+            ) : (
+              leads.map((lead) => (
+                <tr key={lead.id}>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-800">{lead.name}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{lead.email}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{lead.company || "—"}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <Button
+                      onClick={() => deleteLead(lead.id)}
+                      variant="destructive"
+                      size="sm"
+                    >
+                      Delete
+                    </Button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  const CampaignsView = () => (
+    <div>
+      <h2 className="text-3xl font-bold text-slate-800 mb-6">Campaigns</h2>
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Create New Campaign</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <Label htmlFor="campaign-name" className="mb-1 block">Campaign Name</Label>
+              <Input
+                id="campaign-name"
+                placeholder="Campaign Name"
+                value={newCampaignName}
+                onChange={(e) => setNewCampaignName(e.target.value)}
+              />
+            </div>
+            <div className="flex items-end">
+              <Button onClick={addCampaign} className="bg-blue-600 hover:bg-blue-700">
+                Create Campaign
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <table className="min-w-full divide-y divide-slate-200">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Sent</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Opened</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Replied</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-slate-200">
+            {campaigns.map((campaign) => (
+              <tr key={campaign.id}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-800">{campaign.name}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{campaign.sent}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{campaign.opened}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{campaign.replied}</td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <Button
+                    onClick={() => toggleCampaignStatus(campaign.id)}
+                    size="sm"
+                    className={`${
+                      campaign.status === "Running"
+                        ? "bg-green-600 hover:bg-green-700"
+                        : campaign.status === "Paused"
+                        ? "bg-yellow-600 hover:bg-yellow-700"
+                        : "bg-slate-600 hover:bg-slate-700"
+                    }`}
+                  >
+                    {campaign.status}
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  const WarmupNetworkView = () => (
+    <div>
+      <h2 className="text-3xl font-bold text-slate-800 mb-6">Warmup Network</h2>
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <table className="min-w-full divide-y divide-slate-200">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Email</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Provider</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Warmup Status</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-slate-200">
+            {warmupAccounts.map((account) => (
+              <tr key={account.id}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-800">{account.email}</td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <Badge variant="secondary">{account.provider}</Badge>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <Button
+                    onClick={() => toggleWarmup(account.email)}
+                    size="sm"
+                    className={`${
+                      account.warmupEnabled
+                        ? "bg-green-600 hover:bg-green-700"
+                        : "bg-slate-600 hover:bg-slate-700"
+                    }`}
+                  >
+                    {account.warmupEnabled ? "Enabled" : "Disabled"}
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="h-screen flex items-center justify-center bg-slate-50">
+        <Loader2 className="w-8 h-8 animate-spin text-[#d9ab57]" />
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
-      {/* Sidebar */}
-      <aside className="w-64 bg-sidebar-dark text-sidebar-foreground flex flex-col">
-        <div className="p-6 border-b border-sidebar-hover">
-          <h1 className="text-xl font-bold">RenoMeta</h1>
-          <p className="text-sm text-muted-foreground">Outreach Control</p>
-        </div>
-        
-        <nav className="flex-1 p-4 space-y-2">
-          <button
-            onClick={() => setActiveTab("dashboard")}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-              activeTab === "dashboard" ? "bg-primary text-primary-foreground" : "hover:bg-sidebar-hover"
-            }`}
-          >
-            <LayoutDashboard className="h-5 w-5" />
-            <span>Dashboard</span>
-          </button>
-          
-          <button
-            onClick={() => setActiveTab("infrastructure")}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-              activeTab === "infrastructure" ? "bg-primary text-primary-foreground" : "hover:bg-sidebar-hover"
-            }`}
-          >
-            <Mail className="h-5 w-5" />
-            <span>Infrastructure</span>
-          </button>
-          
-          <button
-            onClick={() => setActiveTab("leads")}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-              activeTab === "leads" ? "bg-primary text-primary-foreground" : "hover:bg-sidebar-hover"
-            }`}
-          >
-            <Users className="h-5 w-5" />
-            <span>Leads & Prospects</span>
-          </button>
-          
-          <button
-            onClick={() => setActiveTab("campaigns")}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-              activeTab === "campaigns" ? "bg-primary text-primary-foreground" : "hover:bg-sidebar-hover"
-            }`}
-          >
-            <Megaphone className="h-5 w-5" />
-            <span>Campaigns</span>
-          </button>
-          
-          <button
-            onClick={() => setActiveTab("warmup")}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-              activeTab === "warmup" ? "bg-primary text-primary-foreground" : "hover:bg-sidebar-hover"
-            }`}
-          >
-            <Network className="h-5 w-5" />
-            <span>Warmup Network</span>
-          </button>
-        </nav>
-
-        <div className="p-4 border-t border-sidebar-hover text-xs text-muted-foreground">
-          <p>User: {user?.uid?.substring(0, 8)}...</p>
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 p-8 overflow-auto">
-        {activeTab === "dashboard" && (
-          <div>
-            <h2 className="text-3xl font-bold mb-6">Dashboard Overview</h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Fleet Utilization</CardTitle>
-                  <CardDescription>Average daily usage across accounts</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-4xl font-bold text-primary mb-2">
-                    {Math.round((accounts.reduce((sum, acc) => sum + acc.dailyUsage, 0) / accounts.reduce((sum, acc) => sum + acc.dailyLimit, 0)) * 100)}%
-                  </div>
-                  <Progress value={Math.round((accounts.reduce((sum, acc) => sum + acc.dailyUsage, 0) / accounts.reduce((sum, acc) => sum + acc.dailyLimit, 0)) * 100)} className="mt-2" />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Warmup Accounts</CardTitle>
-                  <CardDescription>Active warmup sessions</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-4xl font-bold text-primary">
-                    {warmupAccounts.filter(a => a.warmupEnabled).length}/{warmupAccounts.length}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-2">Accounts warming up</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Running Campaigns</CardTitle>
-                  <CardDescription>Active outreach campaigns</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-4xl font-bold text-primary">
-                    {campaigns.filter(c => c.status === "Running").length}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-2">Campaigns in progress</p>
-                </CardContent>
-              </Card>
-            </div>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Campaign Performance</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {campaigns.map(campaign => (
-                    <div key={campaign.id} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex-1">
-                        <h3 className="font-semibold">{campaign.name}</h3>
-                        <div className="flex gap-4 mt-2 text-sm text-muted-foreground">
-                          <span>Sent: {campaign.sent}</span>
-                          <span>Opened: {campaign.opened}</span>
-                          <span>Replied: {campaign.replied}</span>
-                        </div>
-                      </div>
-                      <Badge variant={campaign.status === "Running" ? "default" : "secondary"}>
-                        {campaign.status}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {activeTab === "infrastructure" && (
-          <div>
-            <h2 className="text-3xl font-bold mb-6">Email Infrastructure</h2>
-            
-            <div className="space-y-4">
-              {accounts.map(account => (
-                <Card key={account.id}>
-                  <CardContent className="p-6">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <Mail className="h-5 w-5 text-primary" />
-                          <h3 className="font-semibold text-lg">{account.email}</h3>
-                          <Badge variant="outline">{account.provider}</Badge>
-                        </div>
-                        
-                        <div className="grid grid-cols-2 gap-4 mt-4">
-                          <div>
-                            <p className="text-sm text-muted-foreground">DNS Status</p>
-                            <div className="flex gap-2 mt-1">
-                              <Badge variant={account.spf === "OK" ? "default" : "destructive"}>
-                                SPF: {account.spf}
-                              </Badge>
-                              <Badge variant={account.dkim === "OK" ? "default" : "destructive"}>
-                                DKIM: {account.dkim}
-                              </Badge>
-                            </div>
-                          </div>
-                          
-                          <div>
-                            <p className="text-sm text-muted-foreground">Daily Usage</p>
-                            <div className="flex items-center gap-2 mt-1">
-                              <Progress value={(account.dailyUsage / account.dailyLimit) * 100} className="flex-1" />
-                              <span className="text-sm font-medium">{account.dailyUsage}/{account.dailyLimit}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-
-            <div className="mt-8 p-4 bg-card rounded-lg border">
-              <p className="text-sm text-muted-foreground">Debug Info:</p>
-              <p className="text-xs font-mono">User ID: {user?.uid}</p>
-              <p className="text-xs font-mono">App ID: {appId}</p>
-            </div>
-          </div>
-        )}
-
-        {activeTab === "leads" && (
-          <div>
-            <h2 className="text-3xl font-bold mb-6">Leads & Prospects</h2>
-            
-            <Card className="mb-6">
-              <CardHeader>
-                <CardTitle>Add New Lead</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex gap-3">
-                  <Input
-                    placeholder="Name"
-                    value={newLeadName}
-                    onChange={(e) => setNewLeadName(e.target.value)}
-                  />
-                  <Input
-                    placeholder="Email"
-                    type="email"
-                    value={newLeadEmail}
-                    onChange={(e) => setNewLeadEmail(e.target.value)}
-                  />
-                  <Input
-                    placeholder="Company (optional)"
-                    value={newLeadCompany}
-                    onChange={(e) => setNewLeadCompany(e.target.value)}
-                  />
-                  <Button onClick={handleAddLead}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Lead
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>All Leads ({leads.length})</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b">
-                        <th className="text-left p-3">Name</th>
-                        <th className="text-left p-3">Email</th>
-                        <th className="text-left p-3">Company</th>
-                        <th className="text-left p-3">Added</th>
-                        <th className="text-left p-3">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {leads.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="text-center p-8 text-muted-foreground">
-                            No leads yet. Add your first lead above.
-                          </td>
-                        </tr>
-                      ) : (
-                        leads.map(lead => (
-                          <tr key={lead.id} className="border-b hover:bg-muted/50">
-                            <td className="p-3 font-medium">{lead.name}</td>
-                            <td className="p-3">{lead.email}</td>
-                            <td className="p-3">{lead.company || "-"}</td>
-                            <td className="p-3 text-sm text-muted-foreground">
-                              {lead.timestamp?.toDate?.()?.toLocaleDateString() || "Recently"}
-                            </td>
-                            <td className="p-3">
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => handleDeleteLead(lead.id)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {activeTab === "campaigns" && (
-          <div>
-            <h2 className="text-3xl font-bold mb-6">Campaign Management</h2>
-            
-            <Card className="mb-6">
-              <CardHeader>
-                <CardTitle>Create New Campaign</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex gap-3">
-                  <Input
-                    placeholder="Campaign name"
-                    value={newCampaignName}
-                    onChange={(e) => setNewCampaignName(e.target.value)}
-                  />
-                  <Button onClick={handleAddCampaign}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Create Campaign
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Active Campaigns</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b">
-                        <th className="text-left p-3">Campaign</th>
-                        <th className="text-left p-3">Status</th>
-                        <th className="text-left p-3">Sent</th>
-                        <th className="text-left p-3">Opened</th>
-                        <th className="text-left p-3">Replied</th>
-                        <th className="text-left p-3">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {campaigns.map(campaign => (
-                        <tr key={campaign.id} className="border-b hover:bg-muted/50">
-                          <td className="p-3 font-medium">{campaign.name}</td>
-                          <td className="p-3">
-                            <Badge variant={campaign.status === "Running" ? "default" : "secondary"}>
-                              {campaign.status}
-                            </Badge>
-                          </td>
-                          <td className="p-3">{campaign.sent}</td>
-                          <td className="p-3">{campaign.opened}</td>
-                          <td className="p-3">{campaign.replied}</td>
-                          <td className="p-3">
-                            <Button
-                              variant={campaign.status === "Running" ? "outline" : "default"}
-                              size="sm"
-                              onClick={() => toggleCampaignStatus(campaign.id)}
-                            >
-                              {campaign.status === "Running" ? (
-                                <><Pause className="h-4 w-4 mr-2" /> Pause</>
-                              ) : (
-                                <><Play className="h-4 w-4 mr-2" /> Start</>
-                              )}
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {activeTab === "warmup" && (
-          <div>
-            <h2 className="text-3xl font-bold mb-6">Warmup Network</h2>
-            
-            <Card>
-              <CardHeader>
-                <CardTitle>Email Warmup Status</CardTitle>
-                <CardDescription>
-                  Gradually increase sending volume to build sender reputation
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {warmupAccounts.map(account => (
-                    <div key={account.id} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center gap-4">
-                        <Mail className="h-5 w-5 text-muted-foreground" />
-                        <div>
-                          <p className="font-medium">{account.email}</p>
-                          <p className="text-sm text-muted-foreground">{account.provider}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Badge variant={account.warmupEnabled ? "default" : "secondary"}>
-                          {account.warmupEnabled ? "Active" : "Inactive"}
-                        </Badge>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => toggleWarmup(account.id)}
-                        >
-                          {account.warmupEnabled ? "Disable" : "Enable"}
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
+    <div className="flex h-screen overflow-hidden bg-slate-50">
+      <Sidebar />
+      <main className="flex-1 overflow-y-auto p-8">
+        {activeTab === "dashboard" && <DashboardView />}
+        {activeTab === "infrastructure" && <InfrastructureView />}
+        {activeTab === "leads" && <LeadsView />}
+        {activeTab === "campaigns" && <CampaignsView />}
+        {activeTab === "warmup" && <WarmupNetworkView />}
       </main>
     </div>
   );
