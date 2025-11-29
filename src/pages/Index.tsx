@@ -1,602 +1,243 @@
+// src/pages/Index.tsx
 import { useState, useEffect } from "react";
-import { initializeApp } from "firebase/app";
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, User } from "firebase/auth";
-import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc } from "firebase/firestore";
-import { LayoutDashboard, Mail, Users, Megaphone, Radio, Loader2, ChevronRight } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { auth } from "@/lib/firebase";
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
+  onAuthStateChanged 
+} from "firebase/auth";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { Mail, Lock, Loader2, Radio } from "lucide-react";
 import logo from '@/assets/logo.png';
 
-// Firebase global variables (normally injected by backend)
-declare global {
-  interface Window {
-    __app_id?: string;
-    __firebase_config?: any;
-    __initial_auth_token?: string;
-  }
-}
-
-// Mock data for infrastructure
-const MOCK_ACCOUNTS = [
-  { id: 1, email: "outreach1@renometa.com", provider: "GSuite", spf: "OK", dkim: "OK", dailyUsage: 45, dailyLimit: 50 },
-  { id: 2, email: "outreach2@renometa.com", provider: "Hostinger", spf: "OK", dkim: "OK", dailyUsage: 38, dailyLimit: 50 },
-  { id: 3, email: "outreach3@renometa.com", provider: "GSuite", spf: "OK", dkim: "OK", dailyUsage: 42, dailyLimit: 50 },
-  { id: 4, email: "outreach4@renometa.com", provider: "Hostinger", spf: "OK", dkim: "PENDING", dailyUsage: 12, dailyLimit: 50 },
-];
-
-const MOCK_CAMPAIGNS: Campaign[] = [
-  { id: 1, name: "Q4 Contractor Outreach", status: "Running", sent: 234, opened: 89, replied: 12 },
-  { id: 2, name: "Homeowner Follow-ups", status: "Paused", sent: 156, opened: 67, replied: 8 },
-  { id: 3, name: "Partnership Proposals", status: "Draft", sent: 0, opened: 0, replied: 0 },
-];
-
-type Tab = "dashboard" | "infrastructure" | "leads" | "campaigns" | "warmup";
-
-interface Lead {
-  id: string;
-  name: string;
-  email: string;
-  company?: string;
-  timestamp: any;
-}
-
-interface Campaign {
-  id: number;
-  name: string;
-  status: "Running" | "Paused" | "Draft";
-  sent: number;
-  opened: number;
-  replied: number;
-}
-
-interface WarmupAccount {
-  id: number;
-  email: string;
-  provider: string;
-  warmupEnabled: boolean;
-}
-
 const Index = () => {
-  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [appId, setAppId] = useState<string>("");
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
-  
-  // Firestore leads state
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [newLeadName, setNewLeadName] = useState("");
-  const [newLeadEmail, setNewLeadEmail] = useState("");
-  const [newLeadCompany, setNewLeadCompany] = useState("");
-  
-  // Mock state for other features
-  const [accounts] = useState(MOCK_ACCOUNTS);
-  const [campaigns, setCampaigns] = useState<Campaign[]>(MOCK_CAMPAIGNS);
-  const [newCampaignName, setNewCampaignName] = useState("");
-  const [warmupAccounts, setWarmupAccounts] = useState<WarmupAccount[]>(
-    MOCK_ACCOUNTS.map(acc => ({ ...acc, warmupEnabled: true }))
-  );
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
+  const navigate = useNavigate();
 
-  // Initialize Firebase and authenticate
   useEffect(() => {
-    const initFirebase = async () => {
-      try {
-        const config = window.__firebase_config || {
-          apiKey: "demo-key",
-          authDomain: "demo.firebaseapp.com",
-          projectId: "demo-project",
-        };
-        
-        const app = initializeApp(config);
-        const auth = getAuth(app);
-        const currentAppId = window.__app_id || "demo-app";
-        setAppId(currentAppId);
-
-        // Try custom token first, fallback to anonymous
-        const token = window.__initial_auth_token;
-        if (token) {
-          await signInWithCustomToken(auth, token);
-        } else {
-          await signInAnonymously(auth);
-        }
-
-        onAuthStateChanged(auth, (currentUser) => {
-          setUser(currentUser);
-          setLoading(false);
-        });
-      } catch (error) {
-        console.error("Firebase initialization error:", error);
-        setLoading(false);
+    // Check if user is already signed in
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        navigate("/dashboard");
       }
-    };
-
-    initFirebase();
-  }, []);
-
-  // Fetch Firestore leads in real-time
-  useEffect(() => {
-    if (!user || !appId) return;
-
-    const db = getFirestore();
-    const leadsPath = `artifacts/${appId}/users/${user.uid}/leads`;
-    const leadsCollection = collection(db, leadsPath);
-
-    const unsubscribe = onSnapshot(
-      leadsCollection,
-      (snapshot) => {
-        const fetchedLeads: Lead[] = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Lead[];
-        setLeads(fetchedLeads);
-      },
-      (error) => {
-        console.error("Error fetching leads:", error);
-        toast.error("Failed to load leads");
-      }
-    );
+      setInitializing(false);
+    });
 
     return () => unsubscribe();
-  }, [user, appId]);
+  }, [navigate]);
 
-  // Add a new lead to Firestore
-  const addLead = async () => {
-    if (!user || !appId) {
-      toast.error("Authentication required");
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!email || !password) {
+      toast.error("Please fill in all fields");
       return;
     }
-    if (!newLeadName.trim() || !newLeadEmail.trim()) {
-      toast.error("Name and email are required");
-      return;
-    }
+
+    setLoading(true);
 
     try {
-      const db = getFirestore();
-      const leadsPath = `artifacts/${appId}/users/${user.uid}/leads`;
-      const leadsCollection = collection(db, leadsPath);
-      
-      await addDoc(leadsCollection, {
-        name: newLeadName,
-        email: newLeadEmail,
-        company: newLeadCompany,
-        timestamp: new Date(),
-      });
-      
-      setNewLeadName("");
-      setNewLeadEmail("");
-      setNewLeadCompany("");
-      toast.success("Lead added successfully");
-    } catch (error) {
-      console.error("Error adding lead:", error);
-      toast.error("Failed to add lead");
+      if (isSignUp) {
+        await createUserWithEmailAndPassword(auth, email, password);
+        toast.success("Account created successfully!");
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+        toast.success("Welcome back!");
+      }
+      navigate("/dashboard");
+    } catch (error: any) {
+      console.error("Auth error:", error);
+      if (error.code === "auth/email-already-in-use") {
+        toast.error("Email already in use. Try signing in instead.");
+      } else if (error.code === "auth/weak-password") {
+        toast.error("Password should be at least 6 characters");
+      } else if (error.code === "auth/user-not-found" || error.code === "auth/wrong-password") {
+        toast.error("Invalid email or password");
+      } else if (error.code === "auth/invalid-email") {
+        toast.error("Invalid email address");
+      } else if (error.code === "auth/invalid-credential") {
+        toast.error("Invalid credentials. Please check your email and password.");
+      } else {
+        toast.error("Authentication failed. Please try again.");
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Delete a lead from Firestore
-  const deleteLead = async (leadId: string) => {
-    if (!user || !appId) return;
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    const provider = new GoogleAuthProvider();
 
     try {
-      const db = getFirestore();
-      const leadsPath = `artifacts/${appId}/users/${user.uid}/leads`;
-      const leadDoc = doc(db, leadsPath, leadId);
-      await deleteDoc(leadDoc);
-      toast.success("Lead deleted");
-    } catch (error) {
-      console.error("Error deleting lead:", error);
-      toast.error("Failed to delete lead");
+      await signInWithPopup(auth, provider);
+      toast.success("Signed in with Google!");
+      navigate("/dashboard");
+    } catch (error: any) {
+      console.error("Google sign in error:", error);
+      if (error.code === "auth/popup-closed-by-user") {
+        toast.error("Sign in cancelled");
+      } else {
+        toast.error("Google sign in failed");
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Add a new campaign (mock state)
-  const addCampaign = () => {
-    if (!newCampaignName.trim()) {
-      toast.error("Campaign name is required");
-      return;
-    }
-
-    const newCampaign: Campaign = {
-      id: campaigns.length + 1,
-      name: newCampaignName,
-      status: "Draft",
-      sent: 0,
-      opened: 0,
-      replied: 0,
-    };
-    setCampaigns([...campaigns, newCampaign]);
-    setNewCampaignName("");
-    toast.success("Campaign created");
-  };
-
-  // Toggle campaign status
-  const toggleCampaignStatus = (id: number) => {
-    setCampaigns(
-      campaigns.map((c) =>
-        c.id === id
-          ? {
-              ...c,
-              status:
-                c.status === "Running"
-                  ? "Paused"
-                  : c.status === "Paused"
-                  ? "Draft"
-                  : "Running",
-            }
-          : c
-      )
-    );
-  };
-
-  // Toggle warmup status
-  const toggleWarmup = (email: string) => {
-    setWarmupAccounts(
-      warmupAccounts.map((acc) =>
-        acc.email === email ? { ...acc, warmupEnabled: !acc.warmupEnabled } : acc
-      )
-    );
-  };
-
-  const Sidebar = () => {
-    const menuItems = [
-      { id: 'dashboard' as Tab, label: 'Dashboard', icon: LayoutDashboard },
-      { id: 'infrastructure' as Tab, label: 'Infrastructure', icon: Mail },
-      { id: 'leads' as Tab, label: 'Leads & Prospects', icon: Users },
-      { id: 'campaigns' as Tab, label: 'Campaigns', icon: Megaphone },
-      { id: 'warmup' as Tab, label: 'Warmup Network', icon: Radio },
-    ];
-
+  if (initializing) {
     return (
-      <div className={`${sidebarCollapsed ? 'w-16' : 'w-64'} bg-slate-950 text-white flex flex-col h-screen transition-all duration-300`}>
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          {!sidebarCollapsed && (
-            <div className="flex items-center gap-3">
-              <img src={logo} alt="RenoMeta" className="w-8 h-8" />
-              <div>
-                <h1 className="text-xl font-bold text-[#d9ab57]">RenoMeta</h1>
-                <p className="text-xs text-slate-400">Outreach Manager</p>
-              </div>
-            </div>
-          )}
-          {sidebarCollapsed && (
-            <img src={logo} alt="RenoMeta" className="w-8 h-8 mx-auto" />
-          )}
-        </div>
-        <button
-          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          className="p-2 mx-2 mt-2 rounded-md hover:bg-slate-800 transition-colors flex items-center justify-center"
-        >
-          <ChevronRight className={`w-5 h-5 transition-transform ${!sidebarCollapsed ? 'rotate-180' : ''}`} />
-        </button>
-        <nav className="flex-1 p-2 mt-2">
-          {menuItems.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg mb-2 transition-colors ${
-                  activeTab === tab.id
-                    ? 'bg-[#d9ab57] text-white'
-                    : 'text-slate-200 hover:bg-slate-800'
-                }`}
-                title={sidebarCollapsed ? tab.label : undefined}
-              >
-                <Icon className="w-5 h-5 flex-shrink-0" />
-                {!sidebarCollapsed && <span className="text-sm font-medium">{tab.label}</span>}
-              </button>
-            );
-          })}
-        </nav>
-      </div>
-    );
-  };
-
-  const DashboardView = () => {
-    const fleetUtilization = Math.round(
-      (accounts.reduce((sum, acc) => sum + acc.dailyUsage, 0) /
-        accounts.reduce((sum, acc) => sum + acc.dailyLimit, 0)) *
-        100
-    );
-    const warmupCount = warmupAccounts.filter((a) => a.warmupEnabled).length;
-    const runningCampaigns = campaigns.filter((c) => c.status === "Running").length;
-
-    return (
-      <div>
-        <h2 className="text-3xl font-bold text-slate-800 mb-6">Dashboard Overview</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Fleet Utilization</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-4xl font-bold text-[#d9ab57]">{fleetUtilization}%</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Warmup Accounts</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-4xl font-bold text-[#d9ab57]">{warmupCount}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Running Campaigns</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-4xl font-bold text-[#d9ab57]">{runningCampaigns}</div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
-  };
-
-  const InfrastructureView = () => (
-    <div>
-      <h2 className="text-3xl font-bold text-slate-800 mb-6">Email Infrastructure</h2>
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Email</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Provider</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">DNS Status</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Daily Usage</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-slate-200">
-            {accounts.map((account) => (
-              <tr key={account.id}>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-800">{account.email}</td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <Badge variant="secondary">{account.provider}</Badge>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex gap-2">
-                    <Badge variant={account.spf === "OK" ? "default" : "destructive"}>SPF: {account.spf}</Badge>
-                    <Badge variant={account.dkim === "OK" ? "default" : "destructive"}>DKIM: {account.dkim}</Badge>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center gap-2">
-                    <Progress value={(account.dailyUsage / account.dailyLimit) * 100} className="w-24" />
-                    <span className="text-sm text-slate-600">
-                      {account.dailyUsage}/{account.dailyLimit}
-                    </span>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="mt-6 text-xs text-slate-500">
-        <p>User ID: {user?.uid || "Not authenticated"}</p>
-        <p>App ID: {appId}</p>
-      </div>
-    </div>
-  );
-
-  const LeadsView = () => (
-    <div>
-      <h2 className="text-3xl font-bold text-slate-800 mb-6">Leads & Prospects</h2>
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>Add New Lead</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div>
-              <Label htmlFor="lead-name" className="mb-1 block">Name</Label>
-              <Input
-                id="lead-name"
-                placeholder="Name"
-                value={newLeadName}
-                onChange={(e) => setNewLeadName(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="lead-email" className="mb-1 block">Email</Label>
-              <Input
-                id="lead-email"
-                type="email"
-                placeholder="Email"
-                value={newLeadEmail}
-                onChange={(e) => setNewLeadEmail(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="lead-company" className="mb-1 block">Company</Label>
-              <Input
-                id="lead-company"
-                placeholder="Company (optional)"
-                value={newLeadCompany}
-                onChange={(e) => setNewLeadCompany(e.target.value)}
-              />
-            </div>
-            <div className="flex items-end">
-              <Button onClick={addLead} className="w-full bg-blue-600 hover:bg-blue-700">
-                Add Lead
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Name</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Email</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Company</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-slate-200">
-            {leads.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-6 py-8 text-center text-slate-500">
-                  No leads yet. Add your first lead above!
-                </td>
-              </tr>
-            ) : (
-              leads.map((lead) => (
-                <tr key={lead.id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-800">{lead.name}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{lead.email}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{lead.company || "—"}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <Button
-                      onClick={() => deleteLead(lead.id)}
-                      variant="destructive"
-                      size="sm"
-                    >
-                      Delete
-                    </Button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-
-  const CampaignsView = () => (
-    <div>
-      <h2 className="text-3xl font-bold text-slate-800 mb-6">Campaigns</h2>
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>Create New Campaign</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-4">
-            <div className="flex-1">
-              <Label htmlFor="campaign-name" className="mb-1 block">Campaign Name</Label>
-              <Input
-                id="campaign-name"
-                placeholder="Campaign Name"
-                value={newCampaignName}
-                onChange={(e) => setNewCampaignName(e.target.value)}
-              />
-            </div>
-            <div className="flex items-end">
-              <Button onClick={addCampaign} className="bg-blue-600 hover:bg-blue-700">
-                Create Campaign
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Name</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Sent</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Opened</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Replied</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-slate-200">
-            {campaigns.map((campaign) => (
-              <tr key={campaign.id}>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-800">{campaign.name}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{campaign.sent}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{campaign.opened}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{campaign.replied}</td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <Button
-                    onClick={() => toggleCampaignStatus(campaign.id)}
-                    size="sm"
-                    className={`${
-                      campaign.status === "Running"
-                        ? "bg-green-600 hover:bg-green-700"
-                        : campaign.status === "Paused"
-                        ? "bg-yellow-600 hover:bg-yellow-700"
-                        : "bg-slate-600 hover:bg-slate-700"
-                    }`}
-                  >
-                    {campaign.status}
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-
-  const WarmupNetworkView = () => (
-    <div>
-      <h2 className="text-3xl font-bold text-slate-800 mb-6">Warmup Network</h2>
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Email</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Provider</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Warmup Status</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-slate-200">
-            {warmupAccounts.map((account) => (
-              <tr key={account.id}>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-800">{account.email}</td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <Badge variant="secondary">{account.provider}</Badge>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <Button
-                    onClick={() => toggleWarmup(account.email)}
-                    size="sm"
-                    className={`${
-                      account.warmupEnabled
-                        ? "bg-green-600 hover:bg-green-700"
-                        : "bg-slate-600 hover:bg-slate-700"
-                    }`}
-                  >
-                    {account.warmupEnabled ? "Enabled" : "Disabled"}
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-
-  if (loading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-slate-50">
+      <div className="h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
         <Loader2 className="w-8 h-8 animate-spin text-[#d9ab57]" />
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto p-8">
-        {activeTab === "dashboard" && <DashboardView />}
-        {activeTab === "infrastructure" && <InfrastructureView />}
-        {activeTab === "leads" && <LeadsView />}
-        {activeTab === "campaigns" && <CampaignsView />}
-        {activeTab === "warmup" && <WarmupNetworkView />}
-      </main>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        {/* Logo and Branding */}
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <img src={logo} alt="RenoMeta" className="w-12 h-12" />
+            <div>
+              <h1 className="text-3xl font-bold text-[#d9ab57]">RenoMeta</h1>
+              <p className="text-slate-400 text-sm">Outreach Manager</p>
+            </div>
+          </div>
+          <div className="flex items-center justify-center gap-2 text-slate-300">
+            <Radio className="w-5 h-5 text-[#d9ab57]" />
+            <p className="text-sm">Email Warmup & Campaign Management</p>
+          </div>
+        </div>
+
+        {/* Auth Card */}
+        <Card className="border-slate-700 bg-slate-800/50 backdrop-blur">
+          <CardHeader>
+            <CardTitle className="text-2xl text-white">
+              {isSignUp ? "Create Account" : "Welcome Back"}
+            </CardTitle>
+            <CardDescription className="text-slate-400">
+              {isSignUp 
+                ? "Sign up to start managing your email outreach" 
+                : "Sign in to access your dashboard"}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <form onSubmit={handleEmailAuth} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email" className="text-slate-200">Email</Label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="pl-10 bg-slate-900/50 border-slate-600 text-white placeholder:text-slate-500"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="password" className="text-slate-200">Password</Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pl-10 bg-slate-900/50 border-slate-600 text-white placeholder:text-slate-500"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+
+              <Button 
+                type="submit" 
+                className="w-full bg-[#d9ab57] hover:bg-[#c99a46] text-white"
+                disabled={loading}
+              >
+                {loading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  isSignUp ? "Create Account" : "Sign In"
+                )}
+              </Button>
+            </form>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-slate-600" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-slate-800 px-2 text-slate-400">Or continue with</span>
+              </div>
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full bg-slate-900/50 border-slate-600 text-white hover:bg-slate-700"
+              onClick={handleGoogleSignIn}
+              disabled={loading}
+            >
+              <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="currentColor"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="currentColor"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                />
+                <path
+                  fill="currentColor"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                />
+              </svg>
+              Google
+            </Button>
+
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setIsSignUp(!isSignUp)}
+                className="text-sm text-[#d9ab57] hover:text-[#c99a46] transition-colors"
+                disabled={loading}
+              >
+                {isSignUp 
+                  ? "Already have an account? Sign in" 
+                  : "Don't have an account? Sign up"}
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Footer */}
+        <p className="text-center text-sm text-slate-400 mt-6">
+          By continuing, you agree to our Terms of Service and Privacy Policy
+        </p>
+      </div>
     </div>
   );
 };
