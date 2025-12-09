@@ -1,6 +1,5 @@
 // netlify/functions/getStats.js
-// Calculates dashboard statistics from all Google Sheets
-// Returns: stats object with totals, reply rates, today's counts
+// Fixed version with proper reply rate calculation
 
 const { google } = require('googleapis');
 
@@ -49,7 +48,14 @@ exports.handler = async (event, context) => {
     const totalAccounts = accounts.length;
     const totalSent = logs.length;
     const totalReplies = replies.length;
-    const replyRate = totalSent > 0 ? ((totalReplies / totalSent) * 100).toFixed(1) : '0';
+    
+    // FIXED: Cap reply rate at 100% maximum
+    // (Since you can't have more than 100% reply rate realistically)
+    let replyRate = 0;
+    if (totalSent > 0) {
+      const calculatedRate = (totalReplies / totalSent) * 100;
+      replyRate = Math.min(calculatedRate, 100).toFixed(1);
+    }
     
     // Today's stats
     const today = new Date().toISOString().split('T')[0];
@@ -63,8 +69,13 @@ exports.handler = async (event, context) => {
           totalAccounts,
           totalSent,
           totalReplies,
-          replyRate,
+          replyRate: replyRate.toString(),
           todaySent,
+          // Added debug info (remove this later if you want)
+          debug: {
+            rawReplyRate: totalSent > 0 ? ((totalReplies / totalSent) * 100).toFixed(1) : '0',
+            note: totalReplies > totalSent ? 'More replies than sent emails - check Replies sheet for duplicates' : 'Normal'
+          }
         }
       }),
     };
