@@ -23,6 +23,12 @@ interface EmailAccount {
   currentCount: number;
   totalSent: number;
   createdAt?: string;
+  daysActive?: number;
+  warmupStage?: number;
+  warmupProgress?: number;
+  startLimit?: number;
+  dailyIncrement?: number;
+  maxLimit?: number;
 }
 
 interface ActivityLog {
@@ -116,19 +122,8 @@ const WarmupManager = ({ user, appId }: { user: User; appId: string }) => {
     loadWarmupData(true);
   };
 
-  const calculateWarmupStage = (createdAt?: string): number => {
-    if (!createdAt) return 1;
-    
-    const created = new Date(createdAt);
-    const daysSinceCreation = Math.floor((Date.now() - created.getTime()) / (1000 * 60 * 60 * 24));
-    
-    // Stage calculation based on warmup progression
-    if (daysSinceCreation < 10) return 1;
-    if (daysSinceCreation < 20) return 2;
-    if (daysSinceCreation < 30) return 3;
-    if (daysSinceCreation < 40) return 4;
-    return 5;
-  };
+  // Warmup stage is now calculated by the API based on actual progress
+  // No need to calculate it here anymore
 
   const getAccountMetrics = (accountEmail: string) => {
     const accountActivity = activity.filter(a => a.fromAccount === accountEmail);
@@ -148,8 +143,8 @@ const WarmupManager = ({ user, appId }: { user: User; appId: string }) => {
   };
 
   const getWarmupProgress = (account: EmailAccount) => {
-    const stage = calculateWarmupStage(account.createdAt);
-    return (stage / 5) * 100;
+    // Use the warmupProgress calculated by the API
+    return account.warmupProgress || 0;
   };
 
   const getStatusColor = (status: string) => {
@@ -278,7 +273,7 @@ const WarmupManager = ({ user, appId }: { user: User; appId: string }) => {
               {accounts.map((account, index) => {
                 const progress = getWarmupProgress(account);
                 const metrics = getAccountMetrics(account.email);
-                const stage = calculateWarmupStage(account.createdAt);
+                const stage = account.warmupStage || 1; // Use stage from API
 
                 return (
                   <Card key={index} className="relative overflow-hidden">
