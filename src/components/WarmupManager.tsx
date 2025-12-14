@@ -2,7 +2,7 @@
 // Updated to use Google Sheets via Netlify Functions instead of Firestore
 // This component displays warmup accounts, activity, and statistics from Google Sheets
 
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { User } from "firebase/auth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -76,12 +76,12 @@ const WarmupManager = ({ user }: { user: User }) => {
     try {
       if (showRefreshToast) setRefreshing(true);
 
-      // Call all Netlify functions in parallel
+      // Call all Netlify functions in parallel with userId
       const [accountsRes, activityRes, repliesRes, statsRes] = await Promise.all([
-        fetch('/.netlify/functions/getAccounts'),
-        fetch('/.netlify/functions/getActivity'),
-        fetch('/.netlify/functions/getReplies'),
-        fetch('/.netlify/functions/getStats'),
+        fetch(`/.netlify/functions/getAccounts?userId=${user.uid}`),
+        fetch(`/.netlify/functions/getActivity?userId=${user.uid}`),
+        fetch(`/.netlify/functions/getReplies?userId=${user.uid}`),
+        fetch(`/.netlify/functions/getStats?userId=${user.uid}`),
       ]);
 
       if (!accountsRes.ok || !activityRes.ok || !repliesRes.ok || !statsRes.ok) {
@@ -96,7 +96,7 @@ const WarmupManager = ({ user }: { user: User }) => {
       setAccounts(accountsData.accounts || []);
       setActivity(activityData.activity || []);
       setReplies(repliesData.replies || []);
-      setStats(statsData.stats || null);
+      setStats(statsData || null);
 
       if (showRefreshToast) {
         toast.success("Data refreshed");
