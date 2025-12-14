@@ -1,13 +1,13 @@
-// netlify/functions/getAccounts.js
-// Correctly mapped to your actual Google Sheets structure
+// netlify/functions/getAccounts-airtable.js
+// Fetches email accounts from Airtable
 
-const { google } = require('googleapis');
+const Airtable = require('airtable');
 
-exports.handler = async (event, context) => {
+exports.handler = async (event) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
   };
 
   if (event.httpMethod === 'OPTIONS') {
@@ -15,54 +15,76 @@ exports.handler = async (event, context) => {
   }
 
   try {
-    const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
-    
-    const auth = new google.auth.GoogleAuth({
-      credentials: serviceAccount,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+    // Get userId from query parameters
+    const userId = event.queryStringParameters?.userId;
+
+    if (!userId) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({ error: 'User ID is required' }),
+      };
+    }
+
+    const base = new Airtable({ 
+      apiKey: process.env.AIRTABLE_API_KEY 
+    }).base(process.env.AIRTABLE_BASE_ID);
+
+    const records = await base('Email Accounts')
+      .select({
+        filterByFormula: `{userId} = '${userId}'`,
+        sort: [{ field: 'createdAt', direction: 'desc' }]
+      })
+      .all();
+
+    const accounts = records.map(record => {
+      const fields = record.fields;
+      const daysActive = fields.daysActive || 0;
+      const startLimit = fields.warmupStartLimit || 3;
+      const maxLimit = fields.warmupMaxLimit || 60;
+      const currentLimit = fields.currentDailyLimit || startLimit;
+      
+      const progressPercent = (currentLimit / maxLimit) * 100;
+      let warmupStage = 1;
+      if (progressPercent >= 80) warmupStage = 5;
+      else if (progressPercent >= 60) warmupStage = 4;
+      else if (progressPercent >= 40) warmupStage = 3;
+      else if (progressPercent >= 20) warmupStage = 2;
+
+      return {
+        id: record.id,
+        email: fields.email,
+        provider: fields.provider,
+        type: fields.type,
+        status: fields.status,
+        warmupEnabled: fields.warmupEnabled || false,
+        warmupStartLimit: startLimit,
+        warmupDailyIncrement: fields.warmupDailyIncrement || 1,
+        warmupMaxLimit: maxLimit,
+        daysActive: daysActive,
+        currentDailyLimit: currentLimit,
+        sentToday: fields.sentToday || 0,
+        repliedToday: fields.repliedToday || 0,
+        totalSent: fields.totalSent || 0,
+        warmupStage: warmupStage,
+        warmupProgress: Math.min(progressPercent, 100),
+        createdAt: fields.createdAt,
+        lastSentAt: fields.lastSentAt,
+      };
     });
-
-    const sheets = google.sheets({ version: 'v4', auth });
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.ACCOUNTS_SHEET_ID,
-      range: 'Sheet1!A2:P',
-    });
-
-    const rows = response.data.values || [];
-    
-    // Map columns based on your ACTUAL sheet structure
-    const accounts = rows.map(row => ({
-      email: row[0] || '',                      // A: email
-      provider: row[1] || '',                   // B: provider
-      type: row[2] || '',                       // C: type
-      status: row[3] || 'active',               // D: status
-      createdAt: row[4] || '',                  // E: createdAt
-      dailyLimit: parseInt(row[5]) || 50,       // F: dailyLimit ✅
-      currentCount: parseInt(row[6]) || 0,      // G: sentToday (current daily count)
-      totalSent: parseInt(row[6]) || 0,         // G: sentToday (for display)
-      lastSentAt: row[7] || '',                 // H: lastSentAt
-      owner: row[8] || '',                      // I: owner
-      ownerId: row[9] || '',                    // J: ownerId
-      canSendToday: row[10] || 'true',          // K: canSendToday
-      repliedToday: parseInt(row[11]) || 0,     // L: repliedToday
-      startLimit: parseInt(row[12]) || 10,      // M: startLimit
-      dailyIncrement: parseInt(row[13]) || 5,   // N: dailyIncrement
-      maxLimit: parseInt(row[14]) || 50,        // O: maxLimit
-      daysActive: parseInt(row[15]) || 0,       // P: daysActive
-    }));
 
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({ accounts }),
     };
+
   } catch (error) {
     console.error('Error:', error);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: error.message }),
+      body: JSON.stringify({ error: 'Failed to fetch accounts', details: error.message }),
     };
   }
 };

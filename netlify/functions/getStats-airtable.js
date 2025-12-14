@@ -1,13 +1,13 @@
-// netlify/functions/getStats.js
-// Fixed version with proper reply rate calculation
+// netlify/functions/getStats-airtable.js
+// Calculate stats from Airtable
 
-const { google } = require('googleapis');
+const Airtable = require('airtable');
 
-exports.handler = async (event, context) => {
+exports.handler = async (event) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
   };
 
   if (event.httpMethod === 'OPTIONS') {
@@ -15,76 +15,75 @@ exports.handler = async (event, context) => {
   }
 
   try {
-    const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
+    // Get userId from query parameters
+    const userId = event.queryStringParameters?.userId;
+
+    if (!userId) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({ error: 'User ID is required' }),
+      };
+    }
+
+    const base = new Airtable({ 
+      apiKey: process.env.AIRTABLE_API_KEY 
+    }).base(process.env.AIRTABLE_BASE_ID);
+
+    // Get all accounts for this user
+    const accounts = await base('Email Accounts')
+      .select({
+        filterByFormula: `{userId} = '${userId}'`
+      })
+      .all();
     
-    const auth = new google.auth.GoogleAuth({
-      credentials: serviceAccount,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-    });
-
-    const sheets = google.sheets({ version: 'v4', auth });
-
-    // Get all data for calculations
-    const [accountsRes, logRes, repliesRes] = await Promise.all([
-      sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.ACCOUNTS_SHEET_ID,
-        range: 'Sheet1!A2:Z',
-      }),
-      sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.LOG_SHEET_ID,
-        range: 'Sheet1!A2:K',
-      }),
-      sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.REPLIES_SHEET_ID,
-        range: 'Sheet1!A2:Z',
-      }),
-    ]);
-
-    const accounts = accountsRes.data.values || [];
-    const logs = logRes.data.values || [];
-    const replies = repliesRes.data.values || [];
+    // Get email logs for this user
+    const logs = await base('Email Logs')
+      .select({
+        filterByFormula: `{userId} = '${userId}'`
+      })
+      .all();
+    
+    // Get warmup replies for this user
+    const replies = await base('Warmup Replies')
+      .select({
+        filterByFormula: `{userId} = '${userId}'`
+      })
+      .all();
 
     // Calculate stats
     const totalAccounts = accounts.length;
     const totalSent = logs.length;
     const totalReplies = replies.length;
     
-    // FIXED: Cap reply rate at 100% maximum
-    // (Since you can't have more than 100% reply rate realistically)
-    let replyRate = 0;
-    if (totalSent > 0) {
-      const calculatedRate = (totalReplies / totalSent) * 100;
-      replyRate = Math.min(calculatedRate, 100).toFixed(1);
-    }
-    
-    // Today's stats
-    const today = new Date().toISOString().split('T')[0];
-    const todaySent = logs.filter(row => row[1]?.includes(today)).length;
+    // Calculate reply rate (cap at 100%)
+    const replyRate = totalSent > 0 
+      ? Math.min((totalReplies / totalSent) * 100, 100) 
+      : 0;
+
+    // Sum sentToday across all accounts
+    const sentToday = accounts.reduce((sum, record) => 
+      sum + (record.fields.sentToday || 0), 0
+    );
 
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        stats: {
-          totalAccounts,
-          totalSent,
-          totalReplies,
-          replyRate: replyRate.toString(),
-          todaySent,
-          // Added debug info (remove this later if you want)
-          debug: {
-            rawReplyRate: totalSent > 0 ? ((totalReplies / totalSent) * 100).toFixed(1) : '0',
-            note: totalReplies > totalSent ? 'More replies than sent emails - check Replies sheet for duplicates' : 'Normal'
-          }
-        }
+        totalAccounts,
+        totalSent,
+        totalReplies,
+        replyRate: replyRate.toFixed(1),
+        sentToday,
       }),
     };
+
   } catch (error) {
     console.error('Error:', error);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: error.message }),
+      body: JSON.stringify({ error: 'Failed to fetch stats', details: error.message }),
     };
   }
 };

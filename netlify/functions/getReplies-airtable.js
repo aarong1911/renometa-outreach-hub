@@ -15,13 +15,25 @@ exports.handler = async (event) => {
   }
 
   try {
+    // Get userId from query parameters
+    const userId = event.queryStringParameters?.userId;
+
+    if (!userId) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({ error: 'User ID is required' }),
+      };
+    }
+
     const base = new Airtable({ 
       apiKey: process.env.AIRTABLE_API_KEY 
     }).base(process.env.AIRTABLE_BASE_ID);
 
-    // Get recent replies (last 50)
+    // Get recent replies (last 50) for this user
     const records = await base('Warmup Replies')
       .select({
+        filterByFormula: `{userId} = '${userId}'`,
         maxRecords: 50,
         sort: [{ field: 'repliedAt', direction: 'desc' }]
       })
