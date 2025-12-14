@@ -71,14 +71,21 @@ exports.handler = async (event) => {
     };
 
   } catch (error) {
-    console.error('Error:', error);
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ 
-        error: 'Failed to add lead', 
-        details: error.message 
-      }),
-    };
-  }
+  console.error('Error adding lead:', error);
+
+  const details =
+    error?.response?.body ||
+    error?.message ||
+    'Unknown error';
+
+  return {
+    statusCode: 500,
+    headers,
+    body: JSON.stringify({
+      error: 'Failed to add lead',
+      details,
+    }),
+  };
+}
+
 };
