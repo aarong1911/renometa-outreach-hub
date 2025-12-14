@@ -47,7 +47,7 @@ const Leads = ({ user }: { user: User }) => {
     try {
       if (showToast) setRefreshing(true);
 
-      const response = await fetch('/.netlify/functions/getLeads');
+      const response = await fetch(`/.netlify/functions/getLeads?userId=${user.uid}`);
       
       if (!response.ok) {
         throw new Error('Failed to fetch leads');
@@ -87,7 +87,10 @@ const Leads = ({ user }: { user: User }) => {
       const response = await fetch('/.netlify/functions/addLead', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newLead)
+        body: JSON.stringify({
+          ...newLead,
+          userId: user.uid
+        })
       });
 
       if (!response.ok) {
