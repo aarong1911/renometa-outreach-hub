@@ -1,4 +1,4 @@
-// netlify/functions/getReplies-airtable.js
+// netlify/functions/getReplies.js
 // Fetch warmup replies from Airtable
 
 const Airtable = require('airtable');

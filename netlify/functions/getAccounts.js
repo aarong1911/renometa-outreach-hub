@@ -1,4 +1,4 @@
-// netlify/functions/getAccounts-airtable.js
+// netlify/functions/getAccounts.js
 // Fetches email accounts from Airtable
 
 const Airtable = require('airtable');

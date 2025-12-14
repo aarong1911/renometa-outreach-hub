@@ -1,4 +1,4 @@
-// netlify/functions/getActivity-airtable.js
+// netlify/functions/getActivity.js
 // Fetch recent email activity from Airtable
 
 const Airtable = require('airtable');

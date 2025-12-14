@@ -1,4 +1,4 @@
-// netlify/functions/getStats-airtable.js
+// netlify/functions/getStats.js
 // Calculate stats from Airtable
 
 const Airtable = require('airtable');
