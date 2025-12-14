@@ -85,10 +85,10 @@ const WarmupManager = ({ user, appId }: { user: User; appId: string }) => {
 
       // Call all Netlify functions in parallel
       const [accountsRes, activityRes, repliesRes, statsRes] = await Promise.all([
-        fetch('/.netlify/functions/getAccounts'),
-        fetch('/.netlify/functions/getActivity'),
-        fetch('/.netlify/functions/getReplies'),
-        fetch('/.netlify/functions/getStats'),
+        fetch('/.netlify/functions/getAccounts-airtable'),
+        fetch('/.netlify/functions/getActivity-airtable'),
+        fetch('/.netlify/functions/getReplies-airtable'),
+        fetch('/.netlify/functions/getStats-airtable'),
       ]);
 
       if (!accountsRes.ok || !activityRes.ok || !repliesRes.ok || !statsRes.ok) {
