@@ -2,18 +2,15 @@
 // Updated to use Google Sheets via Netlify Functions instead of Firestore
 // This component displays warmup accounts, activity, and statistics from Google Sheets
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { User } from "firebase/auth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Radio, Mail, TrendingUp, AlertCircle, CheckCircle2, Calendar, Activity, RefreshCw } from "lucide-react";
+import { Radio, Mail, TrendingUp, CheckCircle2, Calendar, Activity, RefreshCw } from "lucide-react";
 
 interface EmailAccount {
   email: string;
@@ -58,7 +55,7 @@ interface Stats {
   todaySent: number;
 }
 
-const WarmupManager = ({ user, appId }: { user: User; appId: string }) => {
+const WarmupManager = ({ user }: { user: User }) => {
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [activity, setActivity] = useState<ActivityLog[]>([]);
   const [replies, setReplies] = useState<Reply[]>([]);
@@ -66,10 +63,6 @@ const WarmupManager = ({ user, appId }: { user: User; appId: string }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState("accounts");
-
-  // New account form state
-  const [newEmail, setNewEmail] = useState("");
-  const [newProvider, setNewProvider] = useState<"gmail" | "zoho">("zoho");
 
   useEffect(() => {
     loadWarmupData();
@@ -85,10 +78,10 @@ const WarmupManager = ({ user, appId }: { user: User; appId: string }) => {
 
       // Call all Netlify functions in parallel
       const [accountsRes, activityRes, repliesRes, statsRes] = await Promise.all([
-        fetch('/.netlify/functions/getAccounts-airtable'),
-        fetch('/.netlify/functions/getActivity-airtable'),
-        fetch('/.netlify/functions/getReplies-airtable'),
-        fetch('/.netlify/functions/getStats-airtable'),
+        fetch('/.netlify/functions/getAccounts'),
+        fetch('/.netlify/functions/getActivity'),
+        fetch('/.netlify/functions/getReplies'),
+        fetch('/.netlify/functions/getStats'),
       ]);
 
       if (!accountsRes.ok || !activityRes.ok || !repliesRes.ok || !statsRes.ok) {
@@ -162,20 +155,12 @@ const WarmupManager = ({ user, appId }: { user: User; appId: string }) => {
     return activity.slice(0, 10);
   };
 
-  const addEmailAccount = async () => {
-    toast.info("Add email account in your Google Sheets 'Accounts' sheet, then refresh this page.");
-  };
-
-  const toggleWarmup = async (accountEmail: string, currentStatus: string) => {
-    toast.info("Update account status in your Google Sheets 'Accounts' sheet to 'active' or 'paused', then refresh.");
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
           <Radio className="w-8 h-8 animate-spin text-blue-500 mx-auto mb-2" />
-          <p className="text-slate-600">Loading warmup data from Google Sheets...</p>
+          <p className="text-slate-600">Loading warmup data from Airtable...</p>
         </div>
       </div>
     );
@@ -187,7 +172,7 @@ const WarmupManager = ({ user, appId }: { user: User; appId: string }) => {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-3xl font-bold text-slate-800">Email Warmup Network</h2>
-          <p className="text-slate-600 mt-1">Automated email warmup powered by Make.com & Google Sheets</p>
+          <p className="text-slate-600 mt-1">Automated email warmup powered by Make.com & Airtable</p>
         </div>
         <Button 
           onClick={handleRefresh} 
@@ -265,7 +250,7 @@ const WarmupManager = ({ user, appId }: { user: User; appId: string }) => {
               <CardContent className="py-12 text-center">
                 <Radio className="w-12 h-12 text-slate-400 mx-auto mb-4" />
                 <p className="text-slate-600 mb-2">No warmup accounts configured yet</p>
-                <p className="text-sm text-slate-500">Add accounts to your Google Sheets 'Accounts' sheet, then refresh.</p>
+                <p className="text-sm text-slate-500">Add accounts to Airtable to get started with warmup.</p>
               </CardContent>
             </Card>
           ) : (
@@ -454,18 +439,6 @@ const WarmupManager = ({ user, appId }: { user: User; appId: string }) => {
         </TabsContent>
       </Tabs>
 
-      {/* Info banner */}
-      <Card className="mt-6 bg-blue-50 border-blue-200">
-        <CardContent className="py-4">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-            <div className="text-sm text-blue-800">
-              <p className="font-medium mb-1">Data Source: Google Sheets</p>
-              <p>All warmup data is stored in your Google Sheets and updated by Make.com automation. To modify accounts or settings, edit the sheets directly and refresh this page.</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 };

@@ -587,7 +587,7 @@ const Dashboard = () => {
         {activeTab === "infrastructure" && <InfrastructureView />}
         {activeTab === "leads" && <LeadsView />}
         {activeTab === "campaigns" && <CampaignsView />}
-        {activeTab === "warmup" && user && <WarmupManager user={user} appId={appId} />}
+        {activeTab === "warmup" && user && <WarmupManager user={user} />}
       </main>
     </div>
   );
