@@ -25,7 +25,9 @@ exports.handler = async (event) => {
   }
 
   try {
+    // Make sure we have a body
     if (!event.body) {
+      console.error("addLead: missing event.body");
       return {
         statusCode: 400,
         headers,
@@ -33,18 +35,20 @@ exports.handler = async (event) => {
       };
     }
 
-    // Parse JSON body
+    // Parse JSON safely
     let payload;
     try {
       payload = JSON.parse(event.body);
     } catch (err) {
-      console.error("JSON parse error in addLead:", err, "body:", event.body);
+      console.error("addLead: JSON parse error:", err, "raw body:", event.body);
       return {
         statusCode: 400,
         headers,
         body: JSON.stringify({ error: "Invalid JSON payload" }),
       };
     }
+
+    console.log("addLead payload:", payload);
 
     const { name, email, company, userId } = payload;
 
@@ -65,24 +69,31 @@ exports.handler = async (event) => {
       };
     }
 
-    // Init Airtable base
-    const base = new Airtable({
+    // Configure Airtable
+    Airtable.configure({
       apiKey: process.env.AIRTABLE_API_KEY,
-    }).base(process.env.AIRTABLE_BASE_ID);
-
-    // Create new lead in the "Leads" table
-    const record = await base("Leads").create({
-      name,
-      email,
-      company: company || "",
-      status: "new",
-      source: "manual",
-      userId,
-      // createdAt can be an Airtable "Created time" field;
-      // no need to send it explicitly unless you want a custom value
     });
 
-    // Build response object
+    const base = Airtable.base(process.env.AIRTABLE_BASE_ID);
+
+    console.log("addLead: creating record in Leads for userId:", userId);
+
+    // Create new lead in the "Leads" table
+    const record = await base("Leads").create(
+      {
+        name,
+        email,
+        company: company || "",
+        status: "new",
+        source: "manual",
+        userId,
+        // createdAt can be a "Created time" field in Airtable, no need to send explicitly
+      },
+      { typecast: true } // let Airtable coerce into select/text if needed
+    );
+
+    console.log("addLead: created record", record.id, record.fields);
+
     const fields = record.fields;
 
     return {
