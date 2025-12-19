@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Users, Plus, Mail, Building, Trash2, RefreshCw } from "lucide-react";
+import { Users, Plus, Mail, Building, Trash2, RefreshCw, Upload } from "lucide-react";
+import LeadsImport from "./LeadsImport";
 
 interface Lead {
   id: string;
@@ -27,6 +28,7 @@ const Leads = ({ user }: { user: User }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [showImportWizard, setShowImportWizard] = useState(false);
 
   // Form state
   const [newLead, setNewLead] = useState({
@@ -151,16 +153,52 @@ const Leads = ({ user }: { user: User }) => {
           <h2 className="text-3xl font-bold text-slate-800">Leads & Prospects</h2>
           <p className="text-slate-600 mt-1">Manage your leads and prospects</p>
         </div>
-        <Button 
-          onClick={handleRefresh} 
-          disabled={refreshing}
-          variant="outline"
-          className="flex items-center gap-2"
-        >
-          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-          {refreshing ? 'Refreshing...' : 'Refresh'}
-        </Button>
+        <div className="flex gap-2">
+          <Button 
+            onClick={() => setShowImportWizard(true)}
+            className="flex items-center gap-2"
+          >
+            <Upload className="w-4 h-4" />
+            Import CSV
+          </Button>
+          <Button 
+            onClick={handleRefresh} 
+            disabled={refreshing}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
+        </div>
       </div>
+
+      {/* Import Wizard Modal */}
+      {showImportWizard && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto">
+            <div className="p-4 border-b flex items-center justify-between">
+              <h3 className="text-lg font-semibold">Import Leads</h3>
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={() => setShowImportWizard(false)}
+              >
+                ×
+              </Button>
+            </div>
+            <div className="p-6">
+              <LeadsImport 
+                user={user}
+                onComplete={() => {
+                  setShowImportWizard(false);
+                  loadLeads();
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add New Lead Form */}
       <Card className="mb-6">

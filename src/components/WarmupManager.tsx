@@ -16,16 +16,18 @@ interface EmailAccount {
   email: string;
   provider: string;
   status: string;
-  dailyLimit: number;
-  currentCount: number;
+  currentDailyLimit: number;
+  sentToday: number;
+  repliedToday: number;
   totalSent: number;
   createdAt?: string;
   daysActive?: number;
   warmupStage?: number;
   warmupProgress?: number;
-  startLimit?: number;
-  dailyIncrement?: number;
-  maxLimit?: number;
+  warmupStartLimit?: number;
+  warmupDailyIncrement?: number;
+  warmupMaxLimit?: number;
+  lastSentAt?: string;
 }
 
 interface ActivityLog {
@@ -279,11 +281,11 @@ const WarmupManager = ({ user }: { user: User }) => {
                         <div className="flex justify-between text-sm mb-2">
                           <span className="text-slate-600">Daily Usage</span>
                           <span className="font-semibold">
-                            {account.currentCount}/{account.dailyLimit}
+                            {account.sentToday}/{account.currentDailyLimit}
                           </span>
                         </div>
                         <Progress 
-                          value={(account.currentCount / account.dailyLimit) * 100} 
+                          value={(account.sentToday / account.currentDailyLimit) * 100} 
                           className="h-2"
                         />
                       </div>
