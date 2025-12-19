@@ -45,7 +45,7 @@ exports.handler = async (event) => {
       };
     }
 
-    const { userId, leads } = payload;
+    const { userId, leads, listId } = payload;
 
     if (!userId) {
       return {
@@ -66,17 +66,28 @@ exports.handler = async (event) => {
     // Basic validation + cleanup
     const cleanedLeads = leads
       .map((l) => ({
-        name: (l.name || "").trim(),
+        firstName: (l.firstName || "").trim(),
+        lastName: (l.lastName || "").trim(),
         email: (l.email || "").trim(),
         company: (l.company || "").trim(),
+        phone: (l.phone || "").trim(),
+        website: (l.website || "").trim(),
+        address: (l.address || "").trim(),
+        city: (l.city || "").trim(),
+        state: (l.state || "").trim(),
+        zip: (l.zip || "").trim(),
+        type: (l.type || "").trim(),
+        rating: parseFloat(l.rating) || 0,
+        reviews: parseInt(l.reviews) || 0,
+        listId: listId || (l.listId || "").trim(),
       }))
-      .filter((l) => l.name && l.email); // require name + email
+      .filter((l) => l.firstName && l.email); // require firstName + email
 
     if (cleanedLeads.length === 0) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: "No valid leads (name + email required)" }),
+        body: JSON.stringify({ error: "No valid leads (first name + email required)" }),
       };
     }
 
@@ -95,11 +106,22 @@ exports.handler = async (event) => {
 
       const recordsToCreate = chunk.map((lead) => ({
         fields: {
-          name: lead.name,
+          firstName: lead.firstName,
+          lastName: lead.lastName,
           email: lead.email,
           company: lead.company || "",
-          status: "new",          // matches your UI
-          source: "csv-import",   // distinguish from manual
+          phone: lead.phone || "",
+          website: lead.website || "",
+          address: lead.address || "",
+          city: lead.city || "",
+          state: lead.state || "",
+          zip: lead.zip || "",
+          type: lead.type || "",
+          rating: lead.rating || 0,
+          reviews: lead.reviews || 0,
+          status: "new",
+          source: "csv-import", // Options: manual, csv-import, excel-import, gsheet-import, api
+          listId: lead.listId || "",
           userId,
         },
       }));

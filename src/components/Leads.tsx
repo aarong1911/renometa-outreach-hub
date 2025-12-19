@@ -14,11 +14,22 @@ import LeadsImport from "./LeadsImport";
 
 interface Lead {
   id: string;
-  name: string;
+  firstName: string;
+  lastName: string;
   email: string;
   company: string;
+  phone: string;
+  website: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  type: string;
+  rating: number;
+  reviews: number;
   status: string;
   source: string;
+  listId: string;
   createdAt: string;
   notes: string;
 }
@@ -32,7 +43,8 @@ const Leads = ({ user }: { user: User }) => {
 
   // Form state
   const [newLead, setNewLead] = useState({
-    name: "",
+    firstName: "",
+    lastName: "",
     email: "",
     company: ""
   });
@@ -78,8 +90,8 @@ const Leads = ({ user }: { user: User }) => {
   const handleAddLead = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!newLead.name || !newLead.email) {
-      toast.error("Name and email are required");
+    if (!newLead.firstName || !newLead.email) {
+      toast.error("First name and email are required");
       return;
     }
 
@@ -104,7 +116,7 @@ const Leads = ({ user }: { user: User }) => {
       toast.success("Lead added successfully");
       
       // Reset form
-      setNewLead({ name: "", email: "", company: "" });
+      setNewLead({ firstName: "", lastName: "", email: "", company: "" });
       
       // Reload leads
       loadLeads();
@@ -131,6 +143,23 @@ const Leads = ({ user }: { user: User }) => {
         return "bg-red-500";
       default:
         return "bg-gray-500";
+    }
+  };
+
+  const getSourceLabel = (source: string) => {
+    switch (source) {
+      case "manual":
+        return "Manual";
+      case "csv-import":
+        return "CSV";
+      case "excel-import":
+        return "Excel";
+      case "gsheet-import":
+        return "Google Sheets";
+      case "api":
+        return "API";
+      default:
+        return source;
     }
   };
 
@@ -209,18 +238,27 @@ const Leads = ({ user }: { user: User }) => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleAddLead} className="flex gap-4 items-end">
-            <div className="flex-1">
-              <Label htmlFor="name">Name</Label>
+          <form onSubmit={handleAddLead} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+            <div>
+              <Label htmlFor="firstName">First Name</Label>
               <Input
-                id="name"
-                placeholder="Name"
-                value={newLead.name}
-                onChange={(e) => setNewLead({ ...newLead, name: e.target.value })}
+                id="firstName"
+                placeholder="First Name"
+                value={newLead.firstName}
+                onChange={(e) => setNewLead({ ...newLead, firstName: e.target.value })}
                 required
               />
             </div>
-            <div className="flex-1">
+            <div>
+              <Label htmlFor="lastName">Last Name</Label>
+              <Input
+                id="lastName"
+                placeholder="Last Name"
+                value={newLead.lastName}
+                onChange={(e) => setNewLead({ ...newLead, lastName: e.target.value })}
+              />
+            </div>
+            <div>
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
@@ -231,7 +269,7 @@ const Leads = ({ user }: { user: User }) => {
                 required
               />
             </div>
-            <div className="flex-1">
+            <div>
               <Label htmlFor="company">Company</Label>
               <Input
                 id="company"
@@ -272,6 +310,8 @@ const Leads = ({ user }: { user: User }) => {
                     <th className="text-left py-3 px-4 font-semibold text-sm text-slate-700">NAME</th>
                     <th className="text-left py-3 px-4 font-semibold text-sm text-slate-700">EMAIL</th>
                     <th className="text-left py-3 px-4 font-semibold text-sm text-slate-700">COMPANY</th>
+                    <th className="text-left py-3 px-4 font-semibold text-sm text-slate-700">PHONE</th>
+                    <th className="text-left py-3 px-4 font-semibold text-sm text-slate-700">TYPE</th>
                     <th className="text-left py-3 px-4 font-semibold text-sm text-slate-700">STATUS</th>
                     <th className="text-left py-3 px-4 font-semibold text-sm text-slate-700">ACTIONS</th>
                   </tr>
@@ -280,7 +320,19 @@ const Leads = ({ user }: { user: User }) => {
                   {leads.map((lead) => (
                     <tr key={lead.id} className="border-b hover:bg-slate-50 transition-colors">
                       <td className="py-4 px-4">
-                        <p className="font-medium text-sm">{lead.name}</p>
+                        <p className="font-medium text-sm">
+                          {lead.firstName} {lead.lastName}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          {lead.rating > 0 && (
+                            <span className="text-xs text-slate-500">
+                              ⭐ {lead.rating} ({lead.reviews} reviews)
+                            </span>
+                          )}
+                          <span className="text-xs text-slate-400 px-2 py-0.5 bg-slate-100 rounded">
+                            {getSourceLabel(lead.source)}
+                          </span>
+                        </div>
                       </td>
                       <td className="py-4 px-4">
                         <div className="flex items-center gap-2">
@@ -293,6 +345,12 @@ const Leads = ({ user }: { user: User }) => {
                           <Building className="w-4 h-4 text-slate-400" />
                           <span className="text-sm">{lead.company || '-'}</span>
                         </div>
+                      </td>
+                      <td className="py-4 px-4">
+                        <span className="text-sm">{lead.phone || '-'}</span>
+                      </td>
+                      <td className="py-4 px-4">
+                        <span className="text-sm text-slate-600 capitalize">{lead.type || '-'}</span>
                       </td>
                       <td className="py-4 px-4">
                         <Badge className={`${getStatusColor(lead.status)} text-white capitalize`}>

@@ -42,11 +42,22 @@ exports.handler = async (event) => {
       const fields = record.fields;
       return {
         id: record.id,
-        name: fields.name,
+        firstName: fields.firstName || '',
+        lastName: fields.lastName || '',
         email: fields.email,
         company: fields.company || '',
+        phone: fields.phone || '',
+        website: fields.website || '',
+        address: fields.address || '',
+        city: fields.city || '',
+        state: fields.state || '',
+        zip: fields.zip || '',
+        type: fields.type || '',
+        rating: fields.rating || 0,
+        reviews: fields.reviews || 0,
         status: fields.status || 'new',
-        source: fields.source || 'manual',
+        source: fields.source || 'manual', // manual, csv-import, excel-import, gsheet-import, api
+        listId: fields.listId || '',
         userId: fields.userId,
         createdAt: fields.createdAt,
         notes: fields.notes || ''
