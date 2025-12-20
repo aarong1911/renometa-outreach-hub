@@ -379,6 +379,8 @@ export default function CampaignBuilder({
 
       setAccountDialogOpen(false);
       setSelectedAccountId("");
+      
+      // Reload assigned accounts to update UI
       await loadAssignedAccounts();
     } catch (error) {
       console.error("Error adding account:", error);
@@ -409,6 +411,8 @@ export default function CampaignBuilder({
 
       setListDialogOpen(false);
       setSelectedListId("");
+      
+      // Reload assigned lists to update UI
       await loadAssignedLists();
     } catch (error) {
       console.error("Error adding list:", error);
