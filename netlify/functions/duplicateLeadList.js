@@ -2,6 +2,10 @@
 const Airtable = require("airtable");
 const { requireUser } = require("./_lib/auth");
 
+function escapeFormulaString(value) {
+  return String(value || "").replace(/'/g, "\\'");
+}
+
 exports.handler = async (event) => {
   const headers = {
     "Access-Control-Allow-Origin": "*",
@@ -25,22 +29,23 @@ exports.handler = async (event) => {
       return { statusCode: 403, headers, body: JSON.stringify({ error: "Forbidden" }) };
     }
 
-    const now = new Date().toISOString();
     const name = (newName && String(newName).trim()) || `${original.fields.name || "List"} (Copy)`;
 
+    // Create the duplicate list (without createdAt)
     const createdList = await base("LeadLists").create(
       {
         name,
         userId: user.uid,
         source: original.fields.source || "manual",
-        createdAt: now,
       },
       { typecast: true }
     );
 
+    // Find leads in the original list
+    const filterByFormula = `{userId} = '${escapeFormulaString(user.uid)}'`;
     const leads = await base("Leads")
       .select({
-        filterByFormula: `{userId}='${user.uid}'`,
+        filterByFormula,
         pageSize: 100,
       })
       .all();
@@ -77,7 +82,7 @@ exports.handler = async (event) => {
             status: f.status || "new",
             source: f.source || "manual",
             userId: user.uid,
-            createdAt: now,
+            // Removed createdAt - Airtable handles this automatically
             listId: [createdList.id],
           },
         };
@@ -88,7 +93,16 @@ exports.handler = async (event) => {
       cloned += recordsToCreate.length;
     }
 
-    return { statusCode: 200, headers, body: JSON.stringify({ success: true, newListId: createdList.id, clonedLeads: cloned }) };
+    return { 
+      statusCode: 200, 
+      headers, 
+      body: JSON.stringify({ 
+        success: true, 
+        newListId: createdList.id, 
+        clonedLeads: cloned,
+        createdAt: createdList.fields.createdAt,
+      }) 
+    };
   } catch (error) {
     console.error("duplicateLeadList error:", error);
     return { statusCode: 500, headers, body: JSON.stringify({ error: "Failed to duplicate list", details: error.message }) };

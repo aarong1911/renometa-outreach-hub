@@ -23,14 +23,12 @@ exports.handler = async (event) => {
     }
 
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
-    const now = new Date().toISOString();
 
     const record = await base("LeadLists").create(
       {
         name: String(name).trim(),
         userId: user.uid,
         source: (source || "csv-import").toString(),
-        createdAt: now,
       },
       { typecast: true }
     );
@@ -38,7 +36,11 @@ exports.handler = async (event) => {
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ success: true, listId: record.id }),
+      body: JSON.stringify({ 
+        success: true, 
+        listId: record.id,
+        createdAt: record.fields.createdAt,
+      }),
     };
   } catch (error) {
     console.error("createLeadList error:", error);

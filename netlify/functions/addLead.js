@@ -22,7 +22,6 @@ exports.handler = async (event) => {
 
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 
-    const now = new Date().toISOString();
     const record = await base("Leads").create(
       {
         firstName: String(firstName).trim(),
@@ -32,7 +31,6 @@ exports.handler = async (event) => {
         status: "new",
         source: "manual",
         userId: user.uid,
-        createdAt: now,
         ...(listId ? { listId: [listId] } : {}),
       },
       { typecast: true }
@@ -49,6 +47,7 @@ exports.handler = async (event) => {
           lastName: record.fields.lastName,
           email: record.fields.email,
           company: record.fields.company,
+          createdAt: record.fields.createdAt,
         },
       }),
     };

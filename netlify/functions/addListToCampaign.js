@@ -2,6 +2,10 @@
 const Airtable = require("airtable");
 const { requireUser } = require("./_lib/auth");
 
+function escapeFormulaString(value) {
+  return String(value || "").replace(/'/g, "\\'");
+}
+
 exports.handler = async (event) => {
   const headers = {
     "Access-Control-Allow-Origin": "*",
@@ -22,9 +26,16 @@ exports.handler = async (event) => {
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 
     // Avoid duplicates: find existing link
+    // Note: For linked record fields, use ARRAYJOIN to convert array to string for comparison
+    const filterByFormula = `AND(
+      {userId} = '${escapeFormulaString(user.uid)}',
+      ARRAYJOIN({campaignId}) = '${escapeFormulaString(campaignId)}',
+      ARRAYJOIN({listId}) = '${escapeFormulaString(listId)}'
+    )`;
+
     const existing = await base("CampaignLeads")
       .select({
-        filterByFormula: `AND({userId}='${user.uid}', ARRAYJOIN({campaignId})='${campaignId}', ARRAYJOIN({listId})='${listId}')`,
+        filterByFormula,
         maxRecords: 1,
       })
       .all();
@@ -33,18 +44,16 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers, body: JSON.stringify({ success: true, alreadyLinked: true, id: existing[0].id }) };
     }
 
-    const now = new Date().toISOString();
     const created = await base("CampaignLeads").create(
       {
         userId: user.uid,
         campaignId: [campaignId],
         listId: [listId],
-        createdAt: now,
       },
       { typecast: true }
     );
 
-    return { statusCode: 200, headers, body: JSON.stringify({ success: true, id: created.id }) };
+    return { statusCode: 200, headers, body: JSON.stringify({ success: true, id: created.id, createdAt: created.fields.createdAt }) };
   } catch (error) {
     console.error("addListToCampaign error:", error);
     return { statusCode: 500, headers, body: JSON.stringify({ error: "Failed to link list", details: error.message }) };

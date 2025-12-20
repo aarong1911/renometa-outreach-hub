@@ -1,5 +1,5 @@
 // src/components/Campaigns.tsx
-// Campaign management with Airtable backend (AUTH via authedFetch)
+// Campaign management with integrated Campaign Builder
 
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "firebase/auth";
@@ -14,6 +14,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   Mail,
@@ -24,8 +39,11 @@ import {
   RefreshCw,
   Play,
   Pause,
+  List,
+  Settings,
 } from "lucide-react";
 import { authedFetch } from "@/lib/authedFetch";
+import CampaignBuilder from "./CampaignBuilder";
 
 type CampaignStatus = "draft" | "running" | "paused" | "completed";
 
@@ -40,6 +58,19 @@ interface Campaign {
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
+  lists?: Array<{
+    id: string;
+    name: string;
+    source: string;
+  }>;
+}
+
+interface LeadList {
+  id: string;
+  name: string;
+  source: string;
+  leadCount: number;
+  createdAt: string;
 }
 
 const normalizeStatus = (s: string): CampaignStatus => {
@@ -52,6 +83,7 @@ const normalizeStatus = (s: string): CampaignStatus => {
 
 const Campaigns = ({ user }: { user: User }) => {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [leadLists, setLeadLists] = useState<LeadList[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -59,8 +91,18 @@ const Campaigns = ({ user }: { user: User }) => {
 
   const [newCampaignName, setNewCampaignName] = useState("");
 
+  // For the "Add List to Campaign" dialog
+  const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
+  const [selectedListId, setSelectedListId] = useState("");
+  const [addingList, setAddingList] = useState(false);
+  const [listDialogOpen, setListDialogOpen] = useState(false);
+
+  // Campaign Builder view
+  const [builderCampaign, setBuilderCampaign] = useState<Campaign | null>(null);
+
   useEffect(() => {
     loadCampaigns();
+    loadLeadLists();
     const interval = setInterval(() => loadCampaigns(false), 120000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -82,6 +124,24 @@ const Campaigns = ({ user }: { user: User }) => {
         replied: Number(c.replied || 0),
       }));
 
+      // Load lists for each campaign
+      for (const campaign of list) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const listsRes = await authedFetch(
+            user,
+            `/.netlify/functions/getCampaignLeadLists?campaignId=${campaign.id}`
+          );
+          if (listsRes.ok) {
+            // eslint-disable-next-line no-await-in-loop
+            const listsData = await listsRes.json();
+            campaign.lists = listsData.lists || [];
+          }
+        } catch (err) {
+          console.error(`Error loading lists for campaign ${campaign.id}:`, err);
+        }
+      }
+
       setCampaigns(list);
       if (showToast) toast.success("Campaigns refreshed");
     } catch (err) {
@@ -90,6 +150,18 @@ const Campaigns = ({ user }: { user: User }) => {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const loadLeadLists = async () => {
+    try {
+      const res = await authedFetch(user, "/.netlify/functions/getLeadLists");
+      if (!res.ok) throw new Error("Failed to fetch lead lists");
+
+      const data = await res.json();
+      setLeadLists(data.lists || []);
+    } catch (err) {
+      console.error("Error loading lead lists:", err);
     }
   };
 
@@ -124,6 +196,43 @@ const Campaigns = ({ user }: { user: User }) => {
       toast.error("Failed to create campaign");
     } finally {
       setAdding(false);
+    }
+  };
+
+  const addListToCampaign = async () => {
+    if (!selectedCampaign || !selectedListId) {
+      toast.error("Please select a list");
+      return;
+    }
+
+    setAddingList(true);
+    try {
+      const res = await authedFetch(user, "/.netlify/functions/addListToCampaign", {
+        method: "POST",
+        body: JSON.stringify({
+          campaignId: selectedCampaign.id,
+          listId: selectedListId,
+        }),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+
+      const data = await res.json();
+
+      if (data.alreadyLinked) {
+        toast.info("This list is already attached to this campaign");
+      } else {
+        toast.success("Lead list added to campaign");
+      }
+
+      setListDialogOpen(false);
+      setSelectedListId("");
+      await loadCampaigns(false);
+    } catch (error) {
+      console.error("Error adding list:", error);
+      toast.error("Failed to add list to campaign");
+    } finally {
+      setAddingList(false);
     }
   };
 
@@ -205,6 +314,21 @@ const Campaigns = ({ user }: { user: User }) => {
     const active = campaigns.filter((c) => normalizeStatus(c.status as string) === "running").length;
     return { totalSent, totalOpened, totalReplied, active };
   }, [campaigns]);
+
+  // If viewing campaign builder, show that instead
+  if (builderCampaign) {
+    return (
+      <CampaignBuilder
+        user={user}
+        campaignId={builderCampaign.id}
+        campaignName={builderCampaign.name}
+        onBack={() => {
+          setBuilderCampaign(null);
+          loadCampaigns(false);
+        }}
+      />
+    );
+  }
 
   if (loading) {
     return (
@@ -326,6 +450,19 @@ const Campaigns = ({ user }: { user: User }) => {
                               ? new Date(campaign.createdAt).toLocaleDateString()
                               : "-"}
                           </p>
+                          {campaign.lists && campaign.lists.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {campaign.lists.map((list) => (
+                                <Badge
+                                  key={list.id}
+                                  variant="outline"
+                                  className="text-xs"
+                                >
+                                  📋 {list.name}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
                         </td>
 
                         <td className="py-4 px-4">
@@ -361,6 +498,79 @@ const Campaigns = ({ user }: { user: User }) => {
 
                         <td className="py-4 px-4">
                           <div className="flex gap-2">
+                            {/* Build/Edit Campaign Button */}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setBuilderCampaign(campaign)}
+                            >
+                              <Settings className="w-4 h-4 mr-1" />
+                              Build
+                            </Button>
+
+                            {/* Add List Dialog */}
+                            <Dialog
+                              open={listDialogOpen && selectedCampaign?.id === campaign.id}
+                              onOpenChange={(open) => {
+                                setListDialogOpen(open);
+                                if (open) {
+                                  setSelectedCampaign(campaign);
+                                  setSelectedListId("");
+                                }
+                              }}
+                            >
+                              <DialogTrigger asChild>
+                                <Button variant="outline" size="sm">
+                                  <List className="w-4 h-4 mr-1" />
+                                  Add List
+                                </Button>
+                              </DialogTrigger>
+                              <DialogContent>
+                                <DialogHeader>
+                                  <DialogTitle>Add Lead List to Campaign</DialogTitle>
+                                  <DialogDescription>
+                                    Select a lead list to add to "{campaign.name}"
+                                  </DialogDescription>
+                                </DialogHeader>
+                                <div className="space-y-4 py-4">
+                                  <div>
+                                    <Label>Select Lead List</Label>
+                                    <Select
+                                      value={selectedListId}
+                                      onValueChange={setSelectedListId}
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue placeholder="Choose a list..." />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {leadLists.map((list) => (
+                                          <SelectItem key={list.id} value={list.id}>
+                                            {list.name} ({list.leadCount} leads)
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="flex justify-end gap-2">
+                                    <Button
+                                      variant="outline"
+                                      onClick={() => setListDialogOpen(false)}
+                                    >
+                                      Cancel
+                                    </Button>
+                                    <Button
+                                      onClick={addListToCampaign}
+                                      disabled={!selectedListId || addingList}
+                                      className="bg-[#d9ab57] hover:bg-[#c99a47]"
+                                    >
+                                      {addingList ? "Adding..." : "Add List"}
+                                    </Button>
+                                  </div>
+                                </div>
+                              </DialogContent>
+                            </Dialog>
+
+                            {/* Start/Pause Button */}
                             {status !== "running" ? (
                               <Button
                                 size="sm"
