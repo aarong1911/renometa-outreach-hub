@@ -113,8 +113,6 @@ exports.handler = async (event) => {
       });
     }
 
-    const now = new Date().toISOString();
-
     const toCreate = [];
     const toUpdate = [];
     let skipped = 0;
@@ -178,7 +176,6 @@ exports.handler = async (event) => {
           status: lead.status || "new",
           source: importSource,
           userId: user.uid,
-          createdAt: now,
           // Linked record field -> array of record IDs
           listId: [listId],
         },
