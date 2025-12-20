@@ -1,5 +1,4 @@
 // netlify/functions/_lib/firebaseAdmin.js
-
 const admin = require("firebase-admin");
 
 function getAdmin() {
@@ -11,11 +10,11 @@ function getAdmin() {
 
   if (!projectId || !clientEmail || !privateKey) {
     throw new Error(
-      "Missing FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY env vars"
+      "Missing Firebase env vars. Required: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY"
     );
   }
 
-  // handle \n escaping from Netlify UI
+  // Netlify env vars often store newlines escaped
   if (privateKey.includes("\\n")) {
     privateKey = privateKey.replace(/\\n/g, "\n");
   }
@@ -31,8 +30,4 @@ function getAdmin() {
   return admin;
 }
 
-function getDb() {
-  return getAdmin().firestore();
-}
-
-module.exports = { getAdmin, getDb };
+module.exports = { getAdmin };

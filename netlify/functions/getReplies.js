@@ -1,45 +1,6 @@
 // netlify/functions/getReplies.js
-// Fetch warmup replies from Airtable (AUTH via Firebase ID token)
-
 const Airtable = require("airtable");
-const admin = require("firebase-admin");
-
-function getFirebaseAdmin() {
-  if (admin.apps.length) return admin;
-
-  if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-    throw new Error("FIREBASE_SERVICE_ACCOUNT env var is missing");
-  }
-
-  const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  if (sa.private_key && sa.private_key.includes("\\n")) {
-    sa.private_key = sa.private_key.replace(/\\n/g, "\n");
-  }
-
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: sa.project_id,
-      clientEmail: sa.client_email,
-      privateKey: sa.private_key,
-    }),
-  });
-
-  return admin;
-}
-
-async function requireUser(event) {
-  const authHeader = event.headers.authorization || event.headers.Authorization || "";
-  const m = authHeader.match(/^Bearer (.+)$/);
-  if (!m) {
-    const err = new Error("Missing Authorization bearer token");
-    err.statusCode = 401;
-    throw err;
-  }
-
-  const fb = getFirebaseAdmin();
-  const decoded = await fb.auth().verifyIdToken(m[1]);
-  return { uid: decoded.uid };
-}
+const { requireUser } = require("./_lib/auth");
 
 function escapeAirtableString(value) {
   return String(value || "").replace(/'/g, "\\'");
@@ -60,10 +21,7 @@ exports.handler = async (event) => {
   try {
     const { uid } = await requireUser(event);
 
-    const base = new Airtable({
-      apiKey: process.env.AIRTABLE_API_KEY,
-    }).base(process.env.AIRTABLE_BASE_ID);
-
+    const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
     const safeUid = escapeAirtableString(uid);
 
     const records = await base("Warmup Replies")
@@ -75,15 +33,14 @@ exports.handler = async (event) => {
       .all();
 
     const replies = records.map((record) => {
-      const fields = record.fields || {};
+      const f = record.fields || {};
       return {
         id: record.id,
-        fromAccountId: fields.fromAccountId || "",
-        toAccountId: fields.toAccountId || "",
-        originalEmailId: fields.originalEmailId || "",
-        repliedAt: fields.repliedAt || "",
-        delayMinutes: fields.delayMinutes || 0,
-        campaignId: fields.campaignId || "", // if you added it
+        fromAccountId: f.fromAccountId || "",
+        toAccountId: f.toAccountId || "",
+        originalEmailId: f.originalEmailId || "",
+        repliedAt: f.repliedAt || "",
+        delayMinutes: Number(f.delayMinutes || 0),
       };
     });
 
@@ -91,7 +48,6 @@ exports.handler = async (event) => {
   } catch (error) {
     const statusCode = error.statusCode || 500;
     console.error("getReplies error:", error);
-
     return {
       statusCode,
       headers,

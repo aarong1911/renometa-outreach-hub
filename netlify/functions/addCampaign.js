@@ -1,48 +1,9 @@
 // netlify/functions/addCampaign.js
-// Create a campaign in Airtable (AUTH via Firebase ID token)
-
 const Airtable = require("airtable");
-const admin = require("firebase-admin");
+const { requireUser } = require("./_lib/auth");
 
-// --- Firebase Admin init (once) ---
-function getFirebaseAdmin() {
-  if (admin.apps.length) return admin;
-
-  if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-    throw new Error("FIREBASE_SERVICE_ACCOUNT env var is missing");
-  }
-
-  const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  if (sa.private_key && sa.private_key.includes("\\n")) {
-    sa.private_key = sa.private_key.replace(/\\n/g, "\n");
-  }
-
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: sa.project_id,
-      clientEmail: sa.client_email,
-      privateKey: sa.private_key,
-    }),
-  });
-
-  return admin;
-}
-
-async function requireUser(event) {
-  const authHeader = event.headers.authorization || event.headers.Authorization || "";
-  const m = authHeader.match(/^Bearer (.+)$/);
-
-  if (!m) {
-    const err = new Error("Missing Authorization bearer token");
-    err.statusCode = 401;
-    throw err;
-  }
-
-  const token = m[1];
-  const fb = getFirebaseAdmin();
-  const decoded = await fb.auth().verifyIdToken(token);
-
-  return { uid: decoded.uid, email: decoded.email || "" };
+function escapeAirtableString(value) {
+  return String(value || "").replace(/'/g, "\\'");
 }
 
 exports.handler = async (event) => {
@@ -59,32 +20,27 @@ exports.handler = async (event) => {
 
   try {
     const { uid } = await requireUser(event);
+    const { name } = JSON.parse(event.body || "{}");
 
-    const body = JSON.parse(event.body || "{}");
-    const name = (body.name || "").toString().trim();
-
-    if (!name) {
+    if (!name || !String(name).trim()) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: "Campaign name is required" }) };
     }
 
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
-
     const now = new Date().toISOString();
 
     const record = await base("Campaigns").create(
       {
-        name,
-        userId: uid,
+        name: String(name).trim(),
+        userId: escapeAirtableString(uid),
         status: "draft",
-        createdAt: now,
         sent: 0,
         opened: 0,
         replied: 0,
+        createdAt: now,
       },
       { typecast: true }
     );
-
-    const f = record.fields || {};
 
     return {
       statusCode: 200,
@@ -93,22 +49,21 @@ exports.handler = async (event) => {
         success: true,
         campaign: {
           id: record.id,
-          name: f.name || name,
-          userId: f.userId || uid,
-          status: f.status || "draft",
-          sent: f.sent || 0,
-          opened: f.opened || 0,
-          replied: f.replied || 0,
-          createdAt: f.createdAt || now,
-          startedAt: f.startedAt || "",
-          completedAt: f.completedAt || "",
+          name: record.fields.name || "",
+          userId: record.fields.userId || uid,
+          status: record.fields.status || "draft",
+          sent: Number(record.fields.sent || 0),
+          opened: Number(record.fields.opened || 0),
+          replied: Number(record.fields.replied || 0),
+          createdAt: record.fields.createdAt || now,
+          startedAt: record.fields.startedAt || "",
+          completedAt: record.fields.completedAt || "",
         },
       }),
     };
   } catch (error) {
     const statusCode = error.statusCode || 500;
     console.error("addCampaign error:", error);
-
     return {
       statusCode,
       headers,
