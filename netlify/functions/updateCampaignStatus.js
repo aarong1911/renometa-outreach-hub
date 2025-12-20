@@ -1,53 +1,12 @@
 // netlify/functions/updateCampaignStatus.js
-// Update campaign status (AUTH via Firebase ID token)
+// Update campaign status in Airtable (AUTH via Firebase ID token)
 
 const Airtable = require("airtable");
-const admin = require("firebase-admin");
+const { requireUser } = require("./_lib/auth");
 
-function getFirebaseAdmin() {
-  if (admin.apps.length) return admin;
-
-  if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-    throw new Error("FIREBASE_SERVICE_ACCOUNT env var is missing");
-  }
-
-  const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  if (sa.private_key && sa.private_key.includes("\\n")) {
-    sa.private_key = sa.private_key.replace(/\\n/g, "\n");
-  }
-
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: sa.project_id,
-      clientEmail: sa.client_email,
-      privateKey: sa.private_key,
-    }),
-  });
-
-  return admin;
+function escapeAirtableString(value) {
+  return String(value || "").replace(/'/g, "\\'");
 }
-
-async function requireUser(event) {
-  const authHeader = event.headers.authorization || event.headers.Authorization || "";
-  const m = authHeader.match(/^Bearer (.+)$/);
-  if (!m) {
-    const err = new Error("Missing Authorization bearer token");
-    err.statusCode = 401;
-    throw err;
-  }
-  const token = m[1];
-  const fb = getFirebaseAdmin();
-  const decoded = await fb.auth().verifyIdToken(token);
-  return { uid: decoded.uid, email: decoded.email || "" };
-}
-
-const normalizeStatus = (s) => {
-  const v = String(s || "").toLowerCase();
-  if (v === "running") return "running";
-  if (v === "paused") return "paused";
-  if (v === "completed") return "completed";
-  return "draft";
-};
 
 exports.handler = async (event) => {
   const headers = {
@@ -65,48 +24,36 @@ exports.handler = async (event) => {
     const { uid } = await requireUser(event);
 
     const body = JSON.parse(event.body || "{}");
-    const campaignId = (body.campaignId || "").toString().trim();
-    const nextStatus = normalizeStatus(body.status);
+    const { campaignId, status } = body;
 
     if (!campaignId) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: "campaignId is required" }) };
     }
-    if (!["draft", "running", "paused", "completed"].includes(nextStatus)) {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid status" }) };
+    if (!status || !String(status).trim()) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: "status is required" }) };
     }
 
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 
-    // Load campaign
-    const record = await base("Campaigns").find(campaignId);
-    const f = record.fields || {};
+    // Security: ensure campaign belongs to user before updating
+    const safeUid = escapeAirtableString(uid);
 
-    // Ownership check
-    if ((f.userId || "") !== uid) {
+    const existing = await base("Campaigns").find(campaignId);
+    const owner = existing.fields?.userId;
+
+    if (!owner || String(owner) !== safeUid) {
       return { statusCode: 403, headers, body: JSON.stringify({ error: "Forbidden" }) };
     }
 
     const now = new Date().toISOString();
+    const nextStatus = String(status).trim();
 
-    const updates = { status: nextStatus };
+    // Optional timestamps
+    const patch = { status: nextStatus };
+    if (nextStatus === "running") patch.startedAt = now;
+    if (nextStatus === "completed") patch.completedAt = now;
 
-    // timestamp rules
-    if (nextStatus === "running") {
-      // set startedAt once
-      if (!f.startedAt) updates.startedAt = now;
-      // if restarting after completion (optional): you can clear completedAt if you want
-      // updates.completedAt = "";
-    }
-
-    if (nextStatus === "completed") {
-      updates.completedAt = now;
-      if (!f.startedAt) updates.startedAt = now;
-    }
-
-    // paused/draft: keep timestamps as-is
-
-    const updated = await base("Campaigns").update(campaignId, updates, { typecast: true });
-    const uf = updated.fields || {};
+    const updated = await base("Campaigns").update(campaignId, patch, { typecast: true });
 
     return {
       statusCode: 200,
@@ -115,27 +62,27 @@ exports.handler = async (event) => {
         success: true,
         campaign: {
           id: updated.id,
-          name: uf.name || "",
-          userId: uf.userId || uid,
-          status: uf.status || nextStatus,
-          sent: uf.sent || 0,
-          opened: uf.opened || 0,
-          replied: uf.replied || 0,
-          createdAt: uf.createdAt || "",
-          startedAt: uf.startedAt || "",
-          completedAt: uf.completedAt || "",
+          name: updated.fields?.name || "",
+          userId: updated.fields?.userId || uid,
+          status: updated.fields?.status || nextStatus,
+          sent: Number(updated.fields?.sent || 0),
+          opened: Number(updated.fields?.opened || 0),
+          replied: Number(updated.fields?.replied || 0),
+          createdAt: updated.fields?.createdAt || "",
+          startedAt: updated.fields?.startedAt || "",
+          completedAt: updated.fields?.completedAt || "",
         },
       }),
     };
   } catch (error) {
-    const statusCode = error.statusCode || 500;
+    const statusCode = error.statusCode || (error.message?.includes("Missing Authorization") ? 401 : 500);
     console.error("updateCampaignStatus error:", error);
 
     return {
       statusCode,
       headers,
       body: JSON.stringify({
-        error: statusCode === 401 ? "Unauthorized" : "Failed to update campaign status",
+        error: statusCode === 401 ? "Unauthorized" : "Failed to update campaign",
         details: error.message,
       }),
     };
