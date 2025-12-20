@@ -10,7 +10,9 @@ exports.handler = async (event) => {
   };
 
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers, body: "" };
-  if (event.httpMethod !== "POST") return { statusCode: 405, headers, body: JSON.stringify({ error: "Method not allowed" }) };
+  if (event.httpMethod !== "POST") {
+    return { statusCode: 405, headers, body: JSON.stringify({ error: "Method not allowed" }) };
+  }
 
   try {
     const user = await requireUser(event);
@@ -33,9 +35,17 @@ exports.handler = async (event) => {
       { typecast: true }
     );
 
-    return { statusCode: 200, headers, body: JSON.stringify({ success: true, listId: record.id }) };
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({ success: true, listId: record.id }),
+    };
   } catch (error) {
     console.error("createLeadList error:", error);
-    return { statusCode: 500, headers, body: JSON.stringify({ error: "Failed to create LeadList", details: error.message }) };
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: "Failed to create LeadList", details: error.message }),
+    };
   }
 };

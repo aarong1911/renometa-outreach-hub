@@ -2,7 +2,6 @@
 // Export XLSX file (base64) into { headers, rows, totalRows } (AUTH via Firebase ID token)
 
 const { requireUser } = require("./_lib/auth");
-const XLSX = require("xlsx");
 
 exports.handler = async (event) => {
   const headers = {

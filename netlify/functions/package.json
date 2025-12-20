@@ -4,7 +4,6 @@
   "description": "Netlify Functions for Email Warmup Dashboard",
   "dependencies": {
     "airtable": "^0.12.2",
-    "googleapis": "^128.0.0",
-    "xlsx": "^0.18.5"
+    "googleapis": "^128.0.0"
   }
 }

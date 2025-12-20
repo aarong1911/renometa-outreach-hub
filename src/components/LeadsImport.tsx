@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { Upload, FileText, CheckCircle, AlertCircle, ArrowRight, ArrowLeft } from "lucide-react";
 import { authedFetch } from "@/lib/api";
+import readXlsxFile from "read-excel-file";
 
 interface LeadsImportProps {
   user: User;
