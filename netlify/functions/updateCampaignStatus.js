@@ -1,10 +1,9 @@
-// netlify/functions/addCampaign.js
-// Create a campaign in Airtable (AUTH via Firebase ID token)
+// netlify/functions/updateCampaignStatus.js
+// Update campaign status (AUTH via Firebase ID token)
 
 const Airtable = require("airtable");
 const admin = require("firebase-admin");
 
-// --- Firebase Admin init (once) ---
 function getFirebaseAdmin() {
   if (admin.apps.length) return admin;
 
@@ -31,19 +30,24 @@ function getFirebaseAdmin() {
 async function requireUser(event) {
   const authHeader = event.headers.authorization || event.headers.Authorization || "";
   const m = authHeader.match(/^Bearer (.+)$/);
-
   if (!m) {
     const err = new Error("Missing Authorization bearer token");
     err.statusCode = 401;
     throw err;
   }
-
   const token = m[1];
   const fb = getFirebaseAdmin();
   const decoded = await fb.auth().verifyIdToken(token);
-
   return { uid: decoded.uid, email: decoded.email || "" };
 }
+
+const normalizeStatus = (s) => {
+  const v = String(s || "").toLowerCase();
+  if (v === "running") return "running";
+  if (v === "paused") return "paused";
+  if (v === "completed") return "completed";
+  return "draft";
+};
 
 exports.handler = async (event) => {
   const headers = {
@@ -61,30 +65,48 @@ exports.handler = async (event) => {
     const { uid } = await requireUser(event);
 
     const body = JSON.parse(event.body || "{}");
-    const name = (body.name || "").toString().trim();
+    const campaignId = (body.campaignId || "").toString().trim();
+    const nextStatus = normalizeStatus(body.status);
 
-    if (!name) {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: "Campaign name is required" }) };
+    if (!campaignId) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: "campaignId is required" }) };
+    }
+    if (!["draft", "running", "paused", "completed"].includes(nextStatus)) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid status" }) };
     }
 
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 
+    // Load campaign
+    const record = await base("Campaigns").find(campaignId);
+    const f = record.fields || {};
+
+    // Ownership check
+    if ((f.userId || "") !== uid) {
+      return { statusCode: 403, headers, body: JSON.stringify({ error: "Forbidden" }) };
+    }
+
     const now = new Date().toISOString();
 
-    const record = await base("Campaigns").create(
-      {
-        name,
-        userId: uid,
-        status: "draft",
-        createdAt: now,
-        sent: 0,
-        opened: 0,
-        replied: 0,
-      },
-      { typecast: true }
-    );
+    const updates = { status: nextStatus };
 
-    const f = record.fields || {};
+    // timestamp rules
+    if (nextStatus === "running") {
+      // set startedAt once
+      if (!f.startedAt) updates.startedAt = now;
+      // if restarting after completion (optional): you can clear completedAt if you want
+      // updates.completedAt = "";
+    }
+
+    if (nextStatus === "completed") {
+      updates.completedAt = now;
+      if (!f.startedAt) updates.startedAt = now;
+    }
+
+    // paused/draft: keep timestamps as-is
+
+    const updated = await base("Campaigns").update(campaignId, updates, { typecast: true });
+    const uf = updated.fields || {};
 
     return {
       statusCode: 200,
@@ -92,28 +114,28 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         success: true,
         campaign: {
-          id: record.id,
-          name: f.name || name,
-          userId: f.userId || uid,
-          status: f.status || "draft",
-          sent: f.sent || 0,
-          opened: f.opened || 0,
-          replied: f.replied || 0,
-          createdAt: f.createdAt || now,
-          startedAt: f.startedAt || "",
-          completedAt: f.completedAt || "",
+          id: updated.id,
+          name: uf.name || "",
+          userId: uf.userId || uid,
+          status: uf.status || nextStatus,
+          sent: uf.sent || 0,
+          opened: uf.opened || 0,
+          replied: uf.replied || 0,
+          createdAt: uf.createdAt || "",
+          startedAt: uf.startedAt || "",
+          completedAt: uf.completedAt || "",
         },
       }),
     };
   } catch (error) {
     const statusCode = error.statusCode || 500;
-    console.error("addCampaign error:", error);
+    console.error("updateCampaignStatus error:", error);
 
     return {
       statusCode,
       headers,
       body: JSON.stringify({
-        error: statusCode === 401 ? "Unauthorized" : "Failed to create campaign",
+        error: statusCode === 401 ? "Unauthorized" : "Failed to update campaign status",
         details: error.message,
       }),
     };

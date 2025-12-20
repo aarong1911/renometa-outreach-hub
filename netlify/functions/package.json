@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "description": "Netlify Functions for Email Warmup Dashboard",
   "dependencies": {
-    "googleapis": "^128.0.0"
+    "airtable": "^0.12.2",
+    "googleapis": "^128.0.0",
+    "xlsx": "^0.18.5"
   }
 }

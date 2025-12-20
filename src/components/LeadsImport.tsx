@@ -1,14 +1,14 @@
 // src/components/LeadsImport.tsx
-// CSV Import Wizard (Instantly.ai style)
-
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { User } from "firebase/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Upload, FileText, CheckCircle, AlertCircle, Download, ArrowRight, ArrowLeft } from "lucide-react";
+import { Upload, FileText, CheckCircle, AlertCircle, ArrowRight, ArrowLeft } from "lucide-react";
+import { authedFetch } from "@/lib/api";
 
 interface LeadsImportProps {
   user: User;
@@ -28,150 +28,271 @@ interface PreviewData {
     duplicateCount: number;
     errors: Array<{ row: number; error: string }>;
   };
+  defaultListName?: string;
 }
 
-const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
+type SourceMode = "csv" | "xlsx" | "gsheet";
+
+const stripExt = (filename: string) => filename.replace(/\.[^/.]+$/, "");
+
+const fieldOptions = [
+  { value: "email", label: "Email" },
+  { value: "firstName", label: "First Name" },
+  { value: "lastName", label: "Last Name" },
+  { value: "name", label: "Full Name" },
+  { value: "company", label: "Company" },
+  { value: "phone", label: "Phone" },
+  { value: "website", label: "Website" },
+  { value: "address", label: "Address" },
+  { value: "city", label: "City" },
+  { value: "state", label: "State" },
+  { value: "zip", label: "ZIP Code" },
+  { value: "type", label: "Type/Industry" },
+  { value: "rating", label: "Rating" },
+  { value: "reviews", label: "Reviews" },
+  { value: "custom", label: "Custom Field" },
+  { value: "ignore", label: "Do Not Import" },
+];
+
+export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
   const [step, setStep] = useState<Step>(1);
-  const [sourceType, setSourceType] = useState<'csv' | 'xlsx'>('csv');
+  const [sourceType, setSourceType] = useState<SourceMode>("csv");
   const [file, setFile] = useState<File | null>(null);
+
   const [previewData, setPreviewData] = useState<PreviewData | null>(null);
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
-  const [duplicateAction, setDuplicateAction] = useState<'skip' | 'update' | 'import'>('skip');
+  const [duplicateAction, setDuplicateAction] = useState<"skip" | "update" | "import">("skip");
 
-  const fieldOptions = [
-    { value: 'email', label: 'Email' },
-    { value: 'firstName', label: 'First Name' },
-    { value: 'lastName', label: 'Last Name' },
-    { value: 'name', label: 'Full Name' },
-    { value: 'company', label: 'Company' },
-    { value: 'phone', label: 'Phone' },
-    { value: 'website', label: 'Website' },
-    { value: 'address', label: 'Address' },
-    { value: 'city', label: 'City' },
-    { value: 'state', label: 'State' },
-    { value: 'zip', label: 'ZIP Code' },
-    { value: 'type', label: 'Type/Industry' },
-    { value: 'rating', label: 'Rating' },
-    { value: 'reviews', label: 'Reviews' },
-    { value: 'custom', label: 'Custom Field' },
-    { value: 'ignore', label: 'Do Not Import' },
-  ];
+  // LeadList naming
+  const [listName, setListName] = useState("");
+  const [creatingList, setCreatingList] = useState(false);
+
+  // Google Sheets
+  const [gsheetUrlOrId, setGsheetUrlOrId] = useState("");
+  const [gsheetTabName, setGsheetTabName] = useState("Sheet1");
+
+  const hasEmailMapping = useMemo(() => Object.values(fieldMapping).includes("email"), [fieldMapping]);
+
+  const importSource = useMemo(() => {
+    if (sourceType === "csv") return "csv-import";
+    if (sourceType === "xlsx") return "excel-import";
+    return "gsheet-import";
+  }, [sourceType]);
+
+  useEffect(() => {
+    if (!listName) {
+      if (sourceType !== "gsheet" && file?.name) setListName(stripExt(file.name));
+      if (sourceType === "gsheet" && gsheetUrlOrId) setListName(`Google Sheet - ${gsheetTabName || "Sheet1"}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file, sourceType, gsheetUrlOrId, gsheetTabName]);
+
+  const generatePreview = async (payload: any) => {
+    try {
+      const res = await authedFetch(user, "/.netlify/functions/importPreview", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || "Failed to generate preview");
+      }
+
+      const data = await res.json();
+      setPreviewData(data);
+      setFieldMapping(data.suggestedMapping || {});
+      if (!listName && data.defaultListName) setListName(data.defaultListName);
+      setStep(3);
+      toast.success("Source loaded successfully");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to process source");
+    }
+  };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    // Check file type
-    const extension = selectedFile.name.split('.').pop()?.toLowerCase();
-    if (extension !== 'csv' && extension !== 'xlsx') {
-      toast.error('Please upload a CSV or XLSX file');
+    const extension = selectedFile.name.split(".").pop()?.toLowerCase();
+    if (extension !== "csv" && extension !== "xlsx") {
+      toast.error("Please upload a CSV or XLSX file");
       return;
     }
 
     setFile(selectedFile);
-    setSourceType(extension === 'csv' ? 'csv' : 'xlsx');
-    
-    // Read file content
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const content = event.target?.result as string;
-      await generatePreview(content);
-    };
-    reader.readAsText(selectedFile);
+    setSourceType(extension === "csv" ? "csv" : "xlsx");
+    setListName(stripExt(selectedFile.name));
+
+    if (extension === "csv") {
+      const content = await selectedFile.text();
+      await generatePreview({ fileType: "csv", fileContent: content });
+      return;
+    }
+
+    // xlsx -> base64
+    const buffer = await selectedFile.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const base64 = btoa(binary);
+
+    await generatePreview({ fileType: "xlsx", fileContentBase64: base64 });
   };
 
-  const generatePreview = async (fileContent: string) => {
+  const generateGsheetPreview = async () => {
+    if (!gsheetUrlOrId.trim()) return toast.error("Spreadsheet URL/ID is required");
+    if (!gsheetTabName.trim()) return toast.error("Tab name is required");
+
     try {
-      const response = await fetch('/.netlify/functions/importPreview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await authedFetch(user, "/.netlify/functions/gsheetPreview", {
+        method: "POST",
         body: JSON.stringify({
-          userId: user.uid,
-          fileContent,
-          fileType: sourceType
-        })
+          spreadsheet: gsheetUrlOrId.trim(),
+          sheetName: gsheetTabName.trim(),
+        }),
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to generate preview');
-      }
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
 
-      const data = await response.json();
       setPreviewData(data);
-      setFieldMapping(data.suggestedMapping);
-      setStep(3); // Move to mapping step
-      toast.success('File uploaded successfully');
-    } catch (error) {
-      console.error('Error generating preview:', error);
-      toast.error('Failed to process file');
+      setFieldMapping(data.suggestedMapping || {});
+      setListName(data.defaultListName || `Google Sheet - ${gsheetTabName.trim()}`);
+      setStep(3);
+      toast.success("Google Sheet loaded");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to load Google Sheet preview");
     }
   };
 
-  const handleImport = async () => {
-    if (!file || !previewData) return;
+  const createLeadList = async () => {
+    const name = listName.trim();
+    if (!name) throw new Error("List name is required");
 
-    setImporting(true);
-
+    setCreatingList(true);
     try {
-      // Read file again to get all rows
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const content = event.target?.result as string;
-        const lines = content.split('\n').filter(line => line.trim());
-        
-        // Parse all rows using the mapping
-        const leads = [];
-        for (let i = 1; i < lines.length; i++) {
-          const row = lines[i].split(',').map(cell => cell.trim().replace(/['"]/g, ''));
-          const lead: any = {};
-          
-          previewData.headers.forEach((header, index) => {
-            const mappedField = fieldMapping[header];
-            if (mappedField && mappedField !== 'ignore' && mappedField !== 'custom') {
-              lead[mappedField] = row[index] || '';
-            }
-          });
+      const res = await authedFetch(user, "/.netlify/functions/createLeadList", {
+        method: "POST",
+        body: JSON.stringify({ name, source: importSource }),
+      });
 
-          // Require at least email
-          if (lead.email) {
-            // Combine firstName + lastName into name if needed
-            if (lead.firstName || lead.lastName) {
-              lead.name = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
-            }
-            leads.push(lead);
-          }
-        }
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      return data.listId as string;
+    } finally {
+      setCreatingList(false);
+    }
+  };
 
-        // Call bulkAddLeads
-        const response = await fetch('/.netlify/functions/bulkAddLeads', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: user.uid,
-            leads
-          })
+  const buildLeadsFromRows = (rows: any[], headers: string[]) => {
+    return rows
+      .map((rowObj) => {
+        const lead: any = {};
+        headers.forEach((header) => {
+          const mapped = fieldMapping[header];
+          if (!mapped || mapped === "ignore" || mapped === "custom") return;
+          lead[mapped] = (rowObj?.[header] ?? "").toString().trim();
         });
 
-        if (!response.ok) {
-          throw new Error('Failed to import leads');
+        if (lead.firstName || lead.lastName) {
+          lead.name = `${lead.firstName || ""} ${lead.lastName || ""}`.trim();
         }
+        return lead;
+      })
+      .filter((l) => l.email);
+  };
 
-        const result = await response.json();
-        setStep(5);
-        toast.success(`Successfully imported ${result.imported} leads!`);
-      };
-      reader.readAsText(file);
+  const handleImport = async () => {
+    if (!previewData) return;
 
-    } catch (error) {
-      console.error('Error importing leads:', error);
-      toast.error('Failed to import leads');
+    if (!hasEmailMapping) return toast.error("Please map an Email field before importing");
+
+    setImporting(true);
+    try {
+      // 1) create list
+      const listId = await createLeadList();
+
+      // 2) build leads
+      let leads: any[] = [];
+
+      if (sourceType === "gsheet") {
+        const res = await authedFetch(user, "/.netlify/functions/gsheetExport", {
+          method: "POST",
+          body: JSON.stringify({
+            spreadsheet: gsheetUrlOrId.trim(),
+            sheetName: gsheetTabName.trim(),
+          }),
+        });
+
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+
+        leads = buildLeadsFromRows(data.rows || [], previewData.headers);
+      } else {
+        if (!file) throw new Error("No file selected");
+
+        if (sourceType === "csv") {
+          const csvText = await file.text();
+          const lines = csvText.split("\n").filter((l) => l.trim());
+          const rows = [];
+
+          // naive parse (matches your importPreview)
+          for (let i = 1; i < lines.length; i++) {
+            const cells = lines[i].split(",").map((c) => c.trim().replace(/['"]/g, ""));
+            const obj: any = {};
+            previewData.headers.forEach((h, idx) => (obj[h] = cells[idx] || ""));
+            rows.push(obj);
+          }
+
+          leads = buildLeadsFromRows(rows, previewData.headers);
+        } else {
+          // XLSX import uses backend preview; easiest: re-run preview export-like path by sending base64 again
+          const buffer = await file.arrayBuffer();
+          const bytes = new Uint8Array(buffer);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          const base64 = btoa(binary);
+
+          // Ask importPreview to parse all rows for xlsx
+          const res = await authedFetch(user, "/.netlify/functions/importPreview", {
+            method: "POST",
+            body: JSON.stringify({ fileType: "xlsx", fileContentBase64: base64, fullExport: true }),
+          });
+          if (!res.ok) throw new Error(await res.text());
+          const parsed = await res.json();
+          leads = buildLeadsFromRows(parsed.allRows || [], previewData.headers);
+        }
+      }
+
+      // 3) bulk add
+      const res = await authedFetch(user, "/.netlify/functions/bulkAddLeads", {
+        method: "POST",
+        body: JSON.stringify({
+          leads,
+          listId,
+          source: importSource,
+          duplicateAction,
+        }),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json();
+
+      setStep(5);
+      toast.success(`Imported ${result.imported} leads into "${listName.trim()}"`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to import leads");
     } finally {
       setImporting(false);
     }
   };
 
-  // Step 1: Choose Source
+  // STEP 1
   if (step === 1) {
     return (
       <Card>
@@ -179,31 +300,28 @@ const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
           <CardTitle>Import Leads - Choose Source</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Button
-              variant="outline"
-              className="h-32 flex flex-col gap-2"
-              onClick={() => setStep(2)}
-            >
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Button variant="outline" className="h-32 flex flex-col gap-2" onClick={() => { setSourceType("csv"); setStep(2); }}>
               <FileText className="w-8 h-8" />
               <div>
                 <p className="font-semibold">CSV File</p>
                 <p className="text-xs text-slate-500">Upload .csv file</p>
               </div>
             </Button>
-            
-            <Button
-              variant="outline"
-              className="h-32 flex flex-col gap-2"
-              onClick={() => {
-                setSourceType('xlsx');
-                setStep(2);
-              }}
-            >
+
+            <Button variant="outline" className="h-32 flex flex-col gap-2" onClick={() => { setSourceType("xlsx"); setStep(2); }}>
               <FileText className="w-8 h-8 text-green-600" />
               <div>
                 <p className="font-semibold">Excel File</p>
                 <p className="text-xs text-slate-500">Upload .xlsx file</p>
+              </div>
+            </Button>
+
+            <Button variant="outline" className="h-32 flex flex-col gap-2" onClick={() => { setSourceType("gsheet"); setStep(2); }}>
+              <FileText className="w-8 h-8 text-blue-600" />
+              <div>
+                <p className="font-semibold">Google Sheets</p>
+                <p className="text-xs text-slate-500">Import from a sheet</p>
               </div>
             </Button>
           </div>
@@ -212,55 +330,76 @@ const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
     );
   }
 
-  // Step 2: Upload File
+  // STEP 2
   if (step === 2) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Import Leads - Upload File</CardTitle>
+          <CardTitle>Import Leads - {sourceType === "gsheet" ? "Google Sheets" : "Upload File"}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center">
-              <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-              <p className="text-lg font-semibold mb-2">
-                Drop your {sourceType.toUpperCase()} file here
-              </p>
-              <p className="text-sm text-slate-500 mb-4">or</p>
-              <Label htmlFor="file-upload" className="cursor-pointer">
-                <div className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                  Choose File
+            {sourceType === "gsheet" ? (
+              <div className="space-y-3">
+                <div>
+                  <Label>Spreadsheet URL or ID</Label>
+                  <Input value={gsheetUrlOrId} onChange={(e) => setGsheetUrlOrId(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/... or the ID" />
                 </div>
-                <input
-                  id="file-upload"
-                  type="file"
-                  accept={sourceType === 'csv' ? '.csv' : '.xlsx'}
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
-              </Label>
-            </div>
+                <div>
+                  <Label>Tab name (sheet)</Label>
+                  <Input value={gsheetTabName} onChange={(e) => setGsheetTabName(e.target.value)} placeholder="Sheet1" />
+                </div>
 
-            {file && (
-              <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
-                <CheckCircle className="w-5 h-5 text-green-600" />
-                <span className="text-sm font-medium">{file.name}</span>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setStep(1)}>
+                    <ArrowLeft className="w-4 h-4 mr-2" /> Back
+                  </Button>
+                  <Button onClick={generateGsheetPreview}>
+                    Continue <ArrowRight className="w-4 h-4 ml-2" />
+                  </Button>
+                </div>
               </div>
-            )}
+            ) : (
+              <>
+                <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center">
+                  <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4" />
+                  <p className="text-lg font-semibold mb-2">Drop your {sourceType.toUpperCase()} file here</p>
+                  <p className="text-sm text-slate-500 mb-4">or</p>
+                  <Label htmlFor="file-upload" className="cursor-pointer">
+                    <div className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                      Choose File
+                    </div>
+                    <input
+                      id="file-upload"
+                      type="file"
+                      accept={sourceType === "csv" ? ".csv" : ".xlsx"}
+                      onChange={handleFileSelect}
+                      className="hidden"
+                    />
+                  </Label>
+                </div>
 
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setStep(1)}>
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back
-              </Button>
-            </div>
+                {file && (
+                  <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
+                    <CheckCircle className="w-5 h-5 text-green-600" />
+                    <span className="text-sm font-medium">{file.name}</span>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setStep(1)}>
+                    <ArrowLeft className="w-4 h-4 mr-2" /> Back
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>
     );
   }
 
-  // Step 3: Map Fields
+  // STEP 3
   if (step === 3 && previewData) {
     return (
       <Card>
@@ -270,33 +409,23 @@ const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
         <CardContent>
           <div className="space-y-4">
             <p className="text-sm text-slate-600">
-              Map your CSV columns to lead fields. Preview showing {previewData.sampleRows.length} of {previewData.totalRows} rows.
+              Map your columns to lead fields. Preview showing {previewData.sampleRows.length} of {previewData.totalRows} rows.
             </p>
 
-            {/* Field Mapping */}
             <div className="space-y-3">
               {previewData.headers.map((header) => (
                 <div key={header} className="flex items-center gap-4">
                   <div className="w-1/3">
                     <Label className="font-medium">{header}</Label>
-                    <p className="text-xs text-slate-500">
-                      {previewData.sampleRows[0]?.[header] || 'N/A'}
-                    </p>
+                    <p className="text-xs text-slate-500">{previewData.sampleRows[0]?.[header] || "N/A"}</p>
                   </div>
                   <ArrowRight className="w-4 h-4 text-slate-400" />
                   <div className="w-1/3">
-                    <Select
-                      value={fieldMapping[header]}
-                      onValueChange={(value) => setFieldMapping({ ...fieldMapping, [header]: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
+                    <Select value={fieldMapping[header]} onValueChange={(value) => setFieldMapping({ ...fieldMapping, [header]: value })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {fieldOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
+                        {fieldOptions.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -307,12 +436,10 @@ const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
 
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setStep(2)}>
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back
+                <ArrowLeft className="w-4 h-4 mr-2" /> Back
               </Button>
               <Button onClick={() => setStep(4)}>
-                Continue
-                <ArrowRight className="w-4 h-4 ml-2" />
+                Continue <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
             </div>
           </div>
@@ -321,10 +448,8 @@ const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
     );
   }
 
-  // Step 4: Validation
+  // STEP 4
   if (step === 4 && previewData) {
-    const hasEmailMapping = Object.values(fieldMapping).includes('email');
-
     return (
       <Card>
         <CardHeader>
@@ -332,7 +457,12 @@ const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {/* Validation Summary */}
+            <div className="space-y-2">
+              <Label>List Name</Label>
+              <Input value={listName} onChange={(e) => setListName(e.target.value)} placeholder="e.g. Miami Roofers" />
+              <p className="text-xs text-slate-500">Imported leads will be grouped in this list.</p>
+            </div>
+
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="p-4 bg-slate-50 rounded-lg">
                 <p className="text-sm text-slate-600">Total Rows</p>
@@ -352,25 +482,21 @@ const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
               </div>
             </div>
 
-            {/* Email Required Warning */}
             {!hasEmailMapping && (
               <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
                 <div>
                   <p className="font-semibold text-red-900">Email field is required</p>
-                  <p className="text-sm text-red-700">Please map at least one column to the Email field.</p>
+                  <p className="text-sm text-red-700">Please map at least one column to Email.</p>
                 </div>
               </div>
             )}
 
-            {/* Duplicate Action */}
             {previewData.validation.duplicateCount > 0 && (
               <div className="space-y-2">
                 <Label>Handle Duplicates</Label>
                 <Select value={duplicateAction} onValueChange={(v: any) => setDuplicateAction(v)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="skip">Skip Duplicates</SelectItem>
                     <SelectItem value="update">Update Existing</SelectItem>
@@ -382,14 +508,10 @@ const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
 
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setStep(3)}>
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back
+                <ArrowLeft className="w-4 h-4 mr-2" /> Back
               </Button>
-              <Button 
-                onClick={handleImport}
-                disabled={!hasEmailMapping || importing}
-              >
-                {importing ? 'Importing...' : `Import ${previewData.validation.validCount} Leads`}
+              <Button onClick={handleImport} disabled={!hasEmailMapping || importing || creatingList || !listName.trim()}>
+                {importing ? "Importing..." : `Import ${previewData.validation.validCount} Leads`}
               </Button>
             </div>
           </div>
@@ -398,7 +520,7 @@ const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
     );
   }
 
-  // Step 5: Complete
+  // STEP 5
   if (step === 5) {
     return (
       <Card>
@@ -410,16 +532,22 @@ const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
             <CheckCircle className="w-16 h-16 text-green-600 mx-auto mb-4" />
             <p className="text-lg font-semibold mb-2">Leads imported successfully</p>
             <p className="text-sm text-slate-600 mb-6">Your leads are now available in the system.</p>
-            
+
             <div className="flex gap-2 justify-center">
-              <Button onClick={onComplete}>
-                View Leads
-              </Button>
-              <Button variant="outline" onClick={() => {
-                setStep(1);
-                setFile(null);
-                setPreviewData(null);
-              }}>
+              <Button onClick={onComplete}>View Leads</Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setStep(1);
+                  setFile(null);
+                  setPreviewData(null);
+                  setFieldMapping({});
+                  setListName("");
+                  setGsheetUrlOrId("");
+                  setGsheetTabName("Sheet1");
+                  setDuplicateAction("skip");
+                }}
+              >
                 Import More
               </Button>
             </div>
@@ -430,6 +558,4 @@ const LeadsImport = ({ user, onComplete }: LeadsImportProps) => {
   }
 
   return null;
-};
-
-export default LeadsImport;
+}

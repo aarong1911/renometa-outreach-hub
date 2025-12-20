@@ -1,61 +1,65 @@
 // netlify/functions/getCampaigns.js
-// Fetch campaigns from Airtable
+// Fetch campaigns from Airtable (AUTH via Firebase ID token)
 
-const Airtable = require('airtable');
+const Airtable = require("airtable");
+const { requireUser } = require("./_lib/auth");
+
+function escapeAirtableString(value) {
+  return String(value || "").replace(/'/g, "\\'");
+}
 
 exports.handler = async (event) => {
   const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
   };
 
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
+  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers, body: "" };
+  if (event.httpMethod !== "GET") {
+    return { statusCode: 405, headers, body: JSON.stringify({ error: "Method not allowed" }) };
   }
 
   try {
-    const base = new Airtable({ 
-      apiKey: process.env.AIRTABLE_API_KEY 
-    }).base(process.env.AIRTABLE_BASE_ID);
+    const { uid } = await requireUser(event);
 
-    // Get all campaigns
-    const records = await base('Campaigns')
+    const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
+    const safeUid = escapeAirtableString(uid);
+
+    const records = await base("Campaigns")
       .select({
-        sort: [{ field: 'createdAt', direction: 'desc' }]
+        filterByFormula: `{userId} = '${safeUid}'`,
+        sort: [{ field: "createdAt", direction: "desc" }],
       })
       .all();
 
-    const campaigns = records.map(record => {
-      const fields = record.fields;
+    const campaigns = records.map((r) => {
+      const f = r.fields || {};
       return {
-        id: record.id,
-        name: fields.name,
-        userId: fields.userId,
-        status: fields.status || 'draft',
-        sent: fields.sent || 0,
-        opened: fields.opened || 0,
-        replied: fields.replied || 0,
-        createdAt: fields.createdAt,
-        startedAt: fields.startedAt,
-        completedAt: fields.completedAt
+        id: r.id,
+        name: f.name || "",
+        userId: f.userId || uid,
+        status: f.status || "draft",
+        sent: Number(f.sent || 0),
+        opened: Number(f.opened || 0),
+        replied: Number(f.replied || 0),
+        createdAt: f.createdAt || "",
+        startedAt: f.startedAt || "",
+        completedAt: f.completedAt || "",
       };
     });
 
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({ campaigns }),
-    };
-
+    return { statusCode: 200, headers, body: JSON.stringify({ campaigns }) };
   } catch (error) {
-    console.error('Error:', error);
+    const statusCode = error.message?.includes("Missing Authorization") ? 401 : 500;
+
+    console.error("getCampaigns error:", error);
     return {
-      statusCode: 500,
+      statusCode,
       headers,
-      body: JSON.stringify({ 
-        error: 'Failed to fetch campaigns', 
-        details: error.message 
+      body: JSON.stringify({
+        error: statusCode === 401 ? "Unauthorized" : "Failed to fetch campaigns",
+        details: error.message,
       }),
     };
   }

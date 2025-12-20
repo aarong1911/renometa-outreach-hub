@@ -11,6 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { Radio, Mail, TrendingUp, CheckCircle2, Calendar, Activity, RefreshCw } from "lucide-react";
+import { authedFetch } from "@/lib/api";
 
 interface EmailAccount {
   email: string;
@@ -78,17 +79,18 @@ const WarmupManager = ({ user }: { user: User }) => {
     try {
       if (showRefreshToast) setRefreshing(true);
 
-      // Call all Netlify functions in parallel with userId
-      const [accountsRes, activityRes, repliesRes, statsRes] = await Promise.all([
-        fetch(`/.netlify/functions/getAccounts?userId=${user.uid}`),
-        fetch(`/.netlify/functions/getActivity?userId=${user.uid}`),
-        fetch(`/.netlify/functions/getReplies?userId=${user.uid}`),
-        fetch(`/.netlify/functions/getStats?userId=${user.uid}`),
-      ]);
+      // Call all Netlify functions in parallel (AUTH via authedFetch)
+const [accountsRes, activityRes, repliesRes, statsRes] = await Promise.all([
+  authedFetch(user, "/.netlify/functions/getAccounts"),
+  authedFetch(user, "/.netlify/functions/getActivity"),
+  authedFetch(user, "/.netlify/functions/getReplies"),
+  authedFetch(user, "/.netlify/functions/getStats"),
+]);
 
-      if (!accountsRes.ok || !activityRes.ok || !repliesRes.ok || !statsRes.ok) {
-        throw new Error('Failed to fetch data');
-      }
+if (!accountsRes.ok || !activityRes.ok || !repliesRes.ok || !statsRes.ok) {
+  throw new Error("Failed to fetch data");
+}
+
 
       const accountsData = await accountsRes.json();
       const activityData = await activityRes.json();

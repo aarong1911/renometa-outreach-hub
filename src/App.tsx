@@ -15,14 +15,17 @@ const App = () => (
       <Toaster />
       <BrowserRouter>
         <Routes>
+          {/* Public landing */}
           <Route path="/" element={<Index />} />
-          <Route 
-            path="/dashboard" 
+
+          {/* Protected app routes (Dashboard owns nested routes like /leads/lists) */}
+          <Route
+            path="/*"
             element={
               <ProtectedRoute>
                 <Dashboard />
               </ProtectedRoute>
-            } 
+            }
           />
         </Routes>
       </BrowserRouter>

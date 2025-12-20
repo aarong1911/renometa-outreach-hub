@@ -1,74 +1,33 @@
 // netlify/functions/bulkAddLeads.js
-// Bulk add leads from CSV to Airtable
-
 const Airtable = require("airtable");
+const { requireUser } = require("./_lib/auth");
 
 exports.handler = async (event) => {
   const headers = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
 
-  // CORS preflight
-  if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 200, headers, body: "" };
-  }
-
-  // Only allow POST
-  if (event.httpMethod !== "POST") {
-    return {
-      statusCode: 405,
-      headers,
-      body: JSON.stringify({ error: "Method not allowed" }),
-    };
-  }
+  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers, body: "" };
+  if (event.httpMethod !== "POST") return { statusCode: 405, headers, body: JSON.stringify({ error: "Method not allowed" }) };
 
   try {
-    if (!event.body) {
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ error: "Request body is required" }),
-      };
-    }
+    const user = await requireUser(event);
+    const payload = JSON.parse(event.body || "{}");
+    const { leads, listId, source, duplicateAction = "skip" } = payload;
 
-    let payload;
-    try {
-      payload = JSON.parse(event.body);
-    } catch (err) {
-      console.error("bulkAddLeads: JSON parse error:", err, "body:", event.body);
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ error: "Invalid JSON payload" }),
-      };
-    }
+    if (!listId) return { statusCode: 400, headers, body: JSON.stringify({ error: "listId is required" }) };
+    if (!Array.isArray(leads) || leads.length === 0) return { statusCode: 400, headers, body: JSON.stringify({ error: "No leads provided" }) };
 
-    const { userId, leads, listId } = payload;
+    const importSource = (source || "csv-import").toString();
+    const uid = user.uid;
 
-    if (!userId) {
-      return {
-        statusCode: 401,
-        headers,
-        body: JSON.stringify({ error: "User ID is required" }),
-      };
-    }
-
-    if (!Array.isArray(leads) || leads.length === 0) {
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ error: "No leads provided" }),
-      };
-    }
-
-    // Basic validation + cleanup
     const cleanedLeads = leads
       .map((l) => ({
         firstName: (l.firstName || "").trim(),
         lastName: (l.lastName || "").trim(),
-        email: (l.email || "").trim(),
+        email: (l.email || "").trim().toLowerCase(),
         company: (l.company || "").trim(),
         phone: (l.phone || "").trim(),
         website: (l.website || "").trim(),
@@ -77,61 +36,79 @@ exports.handler = async (event) => {
         state: (l.state || "").trim(),
         zip: (l.zip || "").trim(),
         type: (l.type || "").trim(),
-        rating: parseFloat(l.rating) || 0,
-        reviews: parseInt(l.reviews) || 0,
-        listId: listId || (l.listId || "").trim(),
+        rating: Number.parseFloat(l.rating) || 0,
+        reviews: Number.parseInt(l.reviews, 10) || 0,
       }))
-      .filter((l) => l.firstName && l.email); // require firstName + email
+      .filter((l) => l.email);
 
     if (cleanedLeads.length === 0) {
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ error: "No valid leads (first name + email required)" }),
-      };
+      return { statusCode: 400, headers, body: JSON.stringify({ error: "No valid leads (email required)" }) };
     }
 
-    Airtable.configure({
-      apiKey: process.env.AIRTABLE_API_KEY,
-    });
+    const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 
-    const base = Airtable.base(process.env.AIRTABLE_BASE_ID);
+    // Build existing email -> recordId map (for this user only)
+    const existing = await base("Leads")
+      .select({ filterByFormula: `{userId}='${uid}'`, fields: ["email"] })
+      .all();
 
-    // Airtable limit: max 10 records per .create() call
-    const chunkSize = 10;
-    const createdRecords = [];
+    const existingMap = new Map();
+    for (const r of existing) {
+      const e = (r.fields.email || "").toString().trim().toLowerCase();
+      if (e) existingMap.set(e, r.id);
+    }
 
-    for (let i = 0; i < cleanedLeads.length; i += chunkSize) {
-      const chunk = cleanedLeads.slice(i, i + chunkSize);
+    const toCreate = [];
+    const toUpdate = [];
 
-      const recordsToCreate = chunk.map((lead) => ({
+    for (const lead of cleanedLeads) {
+      const existingId = existingMap.get(lead.email);
+
+      if (existingId) {
+        if (duplicateAction === "skip") continue;
+        if (duplicateAction === "update") {
+          toUpdate.push({
+            id: existingId,
+            fields: {
+              ...lead,
+              status: "new",
+              source: importSource,
+              userId: uid,
+              listId: [listId],
+            },
+          });
+          continue;
+        }
+        // duplicateAction === "import" -> fallthrough to create a new record
+      }
+
+      toCreate.push({
         fields: {
-          firstName: lead.firstName,
-          lastName: lead.lastName,
-          email: lead.email,
-          company: lead.company || "",
-          phone: lead.phone || "",
-          website: lead.website || "",
-          address: lead.address || "",
-          city: lead.city || "",
-          state: lead.state || "",
-          zip: lead.zip || "",
-          type: lead.type || "",
-          rating: lead.rating || 0,
-          reviews: lead.reviews || 0,
+          ...lead,
           status: "new",
-          source: "csv-import", // Options: manual, csv-import, excel-import, gsheet-import, api
-          listId: lead.listId || "",
-          userId,
+          source: importSource,
+          userId: uid,
+          listId: [listId],
         },
-      }));
-
-      // eslint-disable-next-line no-await-in-loop
-      const created = await base("Leads").create(recordsToCreate, {
-        typecast: true,
       });
+    }
 
-      createdRecords.push(...created);
+    const chunkSize = 10;
+    const createdIds = [];
+    const updatedIds = [];
+
+    for (let i = 0; i < toUpdate.length; i += chunkSize) {
+      const chunk = toUpdate.slice(i, i + chunkSize);
+      // eslint-disable-next-line no-await-in-loop
+      const updated = await base("Leads").update(chunk, { typecast: true });
+      updated.forEach((r) => updatedIds.push(r.id));
+    }
+
+    for (let i = 0; i < toCreate.length; i += chunkSize) {
+      const chunk = toCreate.slice(i, i + chunkSize);
+      // eslint-disable-next-line no-await-in-loop
+      const created = await base("Leads").create(chunk, { typecast: true });
+      created.forEach((r) => createdIds.push(r.id));
     }
 
     return {
@@ -139,24 +116,15 @@ exports.handler = async (event) => {
       headers,
       body: JSON.stringify({
         success: true,
-        imported: createdRecords.length,
+        imported: createdIds.length + updatedIds.length,
+        created: createdIds.length,
+        updated: updatedIds.length,
+        leadIds: [...createdIds, ...updatedIds],
       }),
     };
   } catch (error) {
-    console.error("Error bulk adding leads:", error);
-
-    const details =
-      (error && error.response && error.response.body) ||
-      error.message ||
-      "Unknown error";
-
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({
-        error: "Failed to bulk add leads",
-        details,
-      }),
-    };
+    console.error("bulkAddLeads error:", error);
+    const details = error?.response?.body || error.message || "Unknown error";
+    return { statusCode: 500, headers, body: JSON.stringify({ error: "Failed to bulk add leads", details }) };
   }
 };

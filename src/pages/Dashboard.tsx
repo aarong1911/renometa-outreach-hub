@@ -1,43 +1,65 @@
 // src/pages/Dashboard.tsx
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { auth } from "@/lib/firebase";
 import { signOut, onAuthStateChanged, User } from "firebase/auth";
-import { useNavigate } from "react-router-dom";
-import { LayoutDashboard, Mail, Users, Megaphone, Radio, Loader2, ChevronRight, LogOut } from "lucide-react";
+import { useNavigate, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import {
+  LayoutDashboard,
+  Mail,
+  Users,
+  Megaphone,
+  Radio,
+  Loader2,
+  ChevronRight,
+  LogOut,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import logo from '@/assets/logo.png';
+import logo from "@/assets/logo.png";
+import { authedFetch } from "@/lib/api";
 
-// Import new components
-import WarmupManager from '@/components/WarmupManager';
-import Infrastructure from '@/components/Infrastructure';
-import Leads from '@/components/Leads';
-import Campaigns from '@/components/Campaigns';
+// App sections
+import WarmupManager from "@/components/WarmupManager";
+import Infrastructure from "@/components/Infrastructure";
+import Leads from "@/components/Leads";
+import Campaigns from "@/components/Campaigns";
+import LeadListsPage from "@/pages/leads/LeadListsPage";
 
 type Tab = "dashboard" | "infrastructure" | "leads" | "campaigns" | "warmup";
 
 const Dashboard = () => {
-  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
   const navigate = useNavigate();
-  
+  const location = useLocation();
+
   // Stats for dashboard overview
   const [dashboardStats, setDashboardStats] = useState({
     totalAccounts: 0,
     totalLeads: 0,
     activeCampaigns: 0,
-    warmupAccounts: 0
+    warmupAccounts: 0,
   });
+
+  // infer active tab from route
+  const activeTab: Tab = useMemo(() => {
+    const p = location.pathname;
+
+    if (p.startsWith("/campaigns")) return "campaigns";
+    if (p.startsWith("/warmup")) return "warmup";
+    if (p.startsWith("/infrastructure")) return "infrastructure";
+    if (p.startsWith("/leads")) return "leads";
+    return "dashboard";
+  }, [location.pathname]);
 
   // Auth state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        console.log('User UID:', currentUser.uid); // Log UID for debugging
         setLoading(false);
       } else {
         navigate("/");
@@ -53,29 +75,39 @@ const Dashboard = () => {
 
     const loadDashboardStats = async () => {
       try {
-        const [accountsRes, leadsRes, campaignsRes] = await Promise.all([
-          fetch(`/.netlify/functions/getAccounts?userId=${user.uid}`),
-          fetch(`/.netlify/functions/getLeads?userId=${user.uid}`),
-          fetch(`/.netlify/functions/getCampaigns?userId=${user.uid}`)
+        const [accountsRes, listsRes, campaignsRes] = await Promise.all([
+          authedFetch(user, "/.netlify/functions/getAccounts"),
+          authedFetch(user, "/.netlify/functions/getLeadLists"),
+          authedFetch(user, "/.netlify/functions/getCampaigns"),
         ]);
 
+        if (!accountsRes.ok || !listsRes.ok || !campaignsRes.ok) {
+          throw new Error("Failed to fetch dashboard stats");
+        }
+
         const accountsData = await accountsRes.json();
-        const leadsData = await leadsRes.json();
+        const listsData = await listsRes.json();
         const campaignsData = await campaignsRes.json();
 
+        const accounts = accountsData.accounts || [];
+        const lists = listsData.lists || [];
+        const campaigns = campaignsData.campaigns || [];
+
+        const totalLeads = lists.reduce((sum: number, l: any) => sum + (Number(l.leadCount) || 0), 0);
+
         setDashboardStats({
-          totalAccounts: accountsData.accounts?.length || 0,
-          totalLeads: leadsData.leads?.length || 0,
-          activeCampaigns: campaignsData.campaigns?.filter((c: any) => c.status === 'running').length || 0,
-          warmupAccounts: accountsData.accounts?.filter((a: any) => a.warmupEnabled).length || 0
+          totalAccounts: accounts.length || 0,
+          totalLeads,
+          activeCampaigns: campaigns.filter((c: any) => (c.status || "").toLowerCase() === "running").length || 0,
+          warmupAccounts: accounts.filter((a: any) => !!a.warmupEnabled).length || 0,
         });
       } catch (error) {
-        console.error('Error loading dashboard stats:', error);
+        console.error("Error loading dashboard stats:", error);
       }
     };
 
     loadDashboardStats();
-    const interval = setInterval(loadDashboardStats, 300000); // Refresh every 5 minutes
+    const interval = setInterval(loadDashboardStats, 300000); // every 5 minutes
     return () => clearInterval(interval);
   }, [user]);
 
@@ -91,18 +123,22 @@ const Dashboard = () => {
   };
 
   const Sidebar = () => {
-    const menuItems = [
-      { id: 'dashboard' as Tab, label: 'Dashboard', icon: LayoutDashboard },
-      { id: 'infrastructure' as Tab, label: 'Infrastructure', icon: Mail },
-      { id: 'leads' as Tab, label: 'Leads & Prospects', icon: Users },
-      { id: 'campaigns' as Tab, label: 'Campaigns', icon: Megaphone },
-      { id: 'warmup' as Tab, label: 'Warmup Network', icon: Radio },
+    const menuItems: Array<{ id: Tab; label: string; icon: any; path: string }> = [
+      { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, path: "/dashboard" },
+      { id: "infrastructure", label: "Infrastructure", icon: Mail, path: "/infrastructure" },
+      { id: "leads", label: "Leads & Prospects", icon: Users, path: "/leads/lists" }, // default to lists
+      { id: "campaigns", label: "Campaigns", icon: Megaphone, path: "/campaigns" },
+      { id: "warmup", label: "Warmup Network", icon: Radio, path: "/warmup" },
     ];
 
     return (
-      <div className={`${sidebarCollapsed ? 'w-16' : 'w-64'} bg-slate-950 text-white flex flex-col h-screen transition-all duration-300`}>
+      <div
+        className={`${
+          sidebarCollapsed ? "w-16" : "w-64"
+        } bg-slate-950 text-white flex flex-col h-screen transition-all duration-300`}
+      >
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          {!sidebarCollapsed && (
+          {!sidebarCollapsed ? (
             <div className="flex items-center gap-3">
               <img src={logo} alt="RenoMeta" className="w-8 h-8" />
               <div>
@@ -110,28 +146,29 @@ const Dashboard = () => {
                 <p className="text-xs text-slate-400">Outreach Manager</p>
               </div>
             </div>
-          )}
-          {sidebarCollapsed && (
+          ) : (
             <img src={logo} alt="RenoMeta" className="w-8 h-8 mx-auto" />
           )}
         </div>
+
         <button
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
           className="p-2 mx-2 mt-2 rounded-md hover:bg-slate-800 transition-colors flex items-center justify-center"
         >
-          <ChevronRight className={`w-5 h-5 transition-transform ${!sidebarCollapsed ? 'rotate-180' : ''}`} />
+          <ChevronRight className={`w-5 h-5 transition-transform ${!sidebarCollapsed ? "rotate-180" : ""}`} />
         </button>
+
         <nav className="flex-1 p-2 mt-2">
           {menuItems.map((tab) => {
             const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => navigate(tab.path)}
                 className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg mb-2 transition-colors ${
-                  activeTab === tab.id
-                    ? 'bg-[#d9ab57] text-white'
-                    : 'text-slate-200 hover:bg-slate-800'
+                  isActive ? "bg-[#d9ab57] text-white" : "text-slate-200 hover:bg-slate-800"
                 }`}
                 title={sidebarCollapsed ? tab.label : undefined}
               >
@@ -141,6 +178,7 @@ const Dashboard = () => {
             );
           })}
         </nav>
+
         <div className="p-2 border-t border-slate-800">
           <button
             onClick={handleSignOut}
@@ -150,11 +188,8 @@ const Dashboard = () => {
             <LogOut className="w-5 h-5 flex-shrink-0" />
             {!sidebarCollapsed && <span className="text-sm font-medium">Sign Out</span>}
           </button>
-          {!sidebarCollapsed && user && (
-            <div className="px-3 py-2 text-xs text-slate-400 truncate">
-              {user.email}
-            </div>
-          )}
+
+          {!sidebarCollapsed && user && <div className="px-3 py-2 text-xs text-slate-400 truncate">{user.email}</div>}
         </div>
       </div>
     );
@@ -164,6 +199,7 @@ const Dashboard = () => {
     return (
       <div>
         <h2 className="text-3xl font-bold text-slate-800 mb-6">Dashboard Overview</h2>
+
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <Card>
             <CardHeader>
@@ -177,7 +213,7 @@ const Dashboard = () => {
               <p className="text-sm text-slate-600 mt-2">Total configured</p>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -218,42 +254,28 @@ const Dashboard = () => {
           </Card>
         </div>
 
-        {/* Quick Actions */}
         <Card className="mt-6">
           <CardHeader>
             <CardTitle>Quick Actions</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Button 
-                onClick={() => setActiveTab('leads')} 
-                variant="outline" 
-                className="justify-start"
-              >
+              <Button onClick={() => navigate("/leads")} variant="outline" className="justify-start">
                 <Users className="w-4 h-4 mr-2" />
                 Add New Lead
               </Button>
-              <Button 
-                onClick={() => setActiveTab('campaigns')} 
-                variant="outline"
-                className="justify-start"
-              >
+
+              <Button onClick={() => navigate("/campaigns")} variant="outline" className="justify-start">
                 <Megaphone className="w-4 h-4 mr-2" />
                 Create Campaign
               </Button>
-              <Button 
-                onClick={() => setActiveTab('infrastructure')} 
-                variant="outline"
-                className="justify-start"
-              >
+
+              <Button onClick={() => navigate("/infrastructure")} variant="outline" className="justify-start">
                 <Mail className="w-4 h-4 mr-2" />
                 View Infrastructure
               </Button>
-              <Button 
-                onClick={() => setActiveTab('warmup')} 
-                variant="outline"
-                className="justify-start"
-              >
+
+              <Button onClick={() => navigate("/warmup")} variant="outline" className="justify-start">
                 <Radio className="w-4 h-4 mr-2" />
                 Check Warmup Status
               </Button>
@@ -275,12 +297,27 @@ const Dashboard = () => {
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
       <Sidebar />
+
       <main className="flex-1 overflow-y-auto p-8">
-        {activeTab === "dashboard" && <DashboardView />}
-        {activeTab === "infrastructure" && user && <Infrastructure user={user} />}
-        {activeTab === "leads" && user && <Leads user={user} />}
-        {activeTab === "campaigns" && user && <Campaigns user={user} />}
-        {activeTab === "warmup" && user && <WarmupManager user={user} />}
+        <Routes>
+          {/* Default: go to lead lists */}
+          <Route path="/" element={<Navigate to="/leads/lists" replace />} />
+
+          <Route path="/dashboard" element={<DashboardView />} />
+
+          <Route path="/infrastructure" element={user ? <Infrastructure user={user} /> : null} />
+
+          {/* Leads pages */}
+          <Route path="/leads" element={user ? <Leads user={user} /> : null} />
+          <Route path="/leads/lists" element={user ? <LeadListsPage user={user} /> : null} />
+
+          {/* Campaigns / warmup */}
+          <Route path="/campaigns" element={user ? <Campaigns user={user} /> : null} />
+          <Route path="/warmup" element={user ? <WarmupManager user={user} /> : null} />
+
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/leads/lists" replace />} />
+        </Routes>
       </main>
     </div>
   );

@@ -1,16 +1,19 @@
 // src/components/Leads.tsx
 // Leads & Prospects management with Airtable backend
 
-import { useState, useEffect } from "react";
+import { useMemo, useEffect, useState } from "react";
 import { User } from "firebase/auth";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Users, Plus, Mail, Building, Trash2, RefreshCw, Upload } from "lucide-react";
+import { Users, Plus, Mail, Building, Trash2, RefreshCw, Upload, ListChecks } from "lucide-react";
 import LeadsImport from "./LeadsImport";
+import { authedFetch } from "@/lib/api";
 
 interface Lead {
   id: string;
@@ -34,58 +37,97 @@ interface Lead {
   notes: string;
 }
 
+type LeadList = {
+  id: string;
+  name: string;
+  source?: string;
+  createdAt?: string | null;
+  leadCount?: number;
+};
+
 const Leads = ({ user }: { user: User }) => {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [lists, setLists] = useState<LeadList[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [showImportWizard, setShowImportWizard] = useState(false);
+
+  const selectedListId = searchParams.get("listId") || "all";
 
   // Form state
   const [newLead, setNewLead] = useState({
     firstName: "",
     lastName: "",
     email: "",
-    company: ""
+    company: "",
   });
 
+  const listNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    lists.forEach((l) => m.set(l.id, l.name));
+    return m;
+  }, [lists]);
+
   useEffect(() => {
-    loadLeads();
-    
-    // Auto-refresh every 2 minutes
-    const interval = setInterval(loadLeads, 120000);
+    (async () => {
+      await Promise.all([loadLists(), loadLeads(false)]);
+      setLoading(false);
+    })();
+
+    const interval = setInterval(() => {
+      loadLeads(false);
+      loadLists(false);
+    }, 120000);
+
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const loadLists = async (showToast = false) => {
+    try {
+      const res = await authedFetch(user, "/.netlify/functions/getLeadLists");
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setLists(data.lists || []);
+      if (showToast) toast.success("Lists refreshed");
+    } catch (err) {
+      console.error(err);
+      if (showToast) toast.error("Failed to load Lead Lists");
+    }
+  };
 
   const loadLeads = async (showToast = false) => {
     try {
       if (showToast) setRefreshing(true);
 
-      const response = await fetch(`/.netlify/functions/getLeads?userId=${user.uid}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch leads');
-      }
+      const qs = selectedListId !== "all" ? `?listId=${encodeURIComponent(selectedListId)}` : "";
+      const response = await authedFetch(user, `/.netlify/functions/getLeads${qs}`);
+
+      if (!response.ok) throw new Error(await response.text());
 
       const data = await response.json();
       setLeads(data.leads || []);
 
-      if (showToast) {
-        toast.success("Leads refreshed");
-      }
+      if (showToast) toast.success("Leads refreshed");
     } catch (error) {
       console.error("Error loading leads:", error);
-      toast.error("Failed to load leads");
+      if (showToast) toast.error("Failed to load leads");
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
   };
 
-  const handleRefresh = () => {
-    setRefreshing(true);
-    loadLeads(true);
-  };
+  // Reload leads when list filter changes
+  useEffect(() => {
+    if (!loading) loadLeads(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedListId]);
+
+  const handleRefresh = () => loadLeads(true);
 
   const handleAddLead = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,31 +138,22 @@ const Leads = ({ user }: { user: User }) => {
     }
 
     setAdding(true);
-
     try {
-      const response = await fetch('/.netlify/functions/addLead', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...newLead,
-          userId: user.uid
-        })
+      const payload: any = { ...newLead };
+
+      // if currently filtered to a list, add to that list
+      if (selectedListId !== "all") payload.listId = selectedListId;
+
+      const res = await authedFetch(user, "/.netlify/functions/addLead", {
+        method: "POST",
+        body: JSON.stringify(payload),
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to add lead');
-      }
+      if (!res.ok) throw new Error(await res.text());
 
-      const data = await response.json();
-      
       toast.success("Lead added successfully");
-      
-      // Reset form
       setNewLead({ firstName: "", lastName: "", email: "", company: "" });
-      
-      // Reload leads
-      loadLeads();
-
+      await Promise.all([loadLeads(false), loadLists(false)]);
     } catch (error) {
       console.error("Error adding lead:", error);
       toast.error("Failed to add lead");
@@ -130,7 +163,7 @@ const Leads = ({ user }: { user: User }) => {
   };
 
   const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
+    switch ((status || "").toLowerCase()) {
       case "new":
         return "bg-blue-500";
       case "contacted":
@@ -159,7 +192,7 @@ const Leads = ({ user }: { user: User }) => {
       case "api":
         return "API";
       default:
-        return source;
+        return source || "-";
     }
   };
 
@@ -177,27 +210,50 @@ const Leads = ({ user }: { user: User }) => {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
         <div>
           <h2 className="text-3xl font-bold text-slate-800">Leads & Prospects</h2>
           <p className="text-slate-600 mt-1">Manage your leads and prospects</p>
         </div>
-        <div className="flex gap-2">
-          <Button 
-            onClick={() => setShowImportWizard(true)}
-            className="flex items-center gap-2"
-          >
-            <Upload className="w-4 h-4" />
-            Import CSV
+
+        <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+          <div className="min-w-[220px]">
+            <Select
+              value={selectedListId}
+              onValueChange={(v) => {
+                const next = new URLSearchParams(searchParams);
+                if (v === "all") next.delete("listId");
+                else next.set("listId", v);
+                setSearchParams(next);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Filter by list" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Lists</SelectItem>
+                {lists.map((l) => (
+                  <SelectItem key={l.id} value={l.id}>
+                    {l.name} {typeof l.leadCount === "number" ? `(${l.leadCount})` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Button variant="outline" onClick={() => navigate("/leads/lists")} className="flex items-center gap-2">
+            <ListChecks className="w-4 h-4" />
+            Manage Lists
           </Button>
-          <Button 
-            onClick={handleRefresh} 
-            disabled={refreshing}
-            variant="outline"
-            className="flex items-center gap-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? 'Refreshing...' : 'Refresh'}
+
+          <Button onClick={() => setShowImportWizard(true)} className="flex items-center gap-2">
+            <Upload className="w-4 h-4" />
+            Import Leads
+          </Button>
+
+          <Button onClick={handleRefresh} disabled={refreshing} variant="outline" className="flex items-center gap-2">
+            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "Refreshing..." : "Refresh"}
           </Button>
         </div>
       </div>
@@ -208,20 +264,17 @@ const Leads = ({ user }: { user: User }) => {
           <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto">
             <div className="p-4 border-b flex items-center justify-between">
               <h3 className="text-lg font-semibold">Import Leads</h3>
-              <Button 
-                variant="ghost" 
-                size="sm"
-                onClick={() => setShowImportWizard(false)}
-              >
+              <Button variant="ghost" size="sm" onClick={() => setShowImportWizard(false)}>
                 ×
               </Button>
             </div>
             <div className="p-6">
-              <LeadsImport 
+              <LeadsImport
                 user={user}
                 onComplete={() => {
                   setShowImportWizard(false);
-                  loadLeads();
+                  loadLeads(false);
+                  loadLists(false);
                 }}
               />
             </div>
@@ -279,9 +332,16 @@ const Leads = ({ user }: { user: User }) => {
               />
             </div>
             <Button type="submit" disabled={adding}>
-              {adding ? 'Adding...' : 'Add Lead'}
+              {adding ? "Adding..." : "Add Lead"}
             </Button>
           </form>
+
+          {selectedListId !== "all" && (
+            <p className="text-xs text-slate-500 mt-3">
+              New leads added here will be placed into:{" "}
+              <span className="font-medium text-slate-700">{listNameById.get(selectedListId) || selectedListId}</span>
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -290,17 +350,17 @@ const Leads = ({ user }: { user: User }) => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Users className="w-5 h-5" />
-            All Leads
+            {selectedListId === "all" ? "All Leads" : `Leads — ${listNameById.get(selectedListId) || "List"}`}
           </CardTitle>
           <CardDescription>
-            {leads.length} lead{leads.length !== 1 ? 's' : ''} total
+            {leads.length} lead{leads.length !== 1 ? "s" : ""} total
           </CardDescription>
         </CardHeader>
         <CardContent>
           {leads.length === 0 ? (
             <div className="text-center py-12">
               <Users className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-              <p className="text-slate-600 mb-2">No leads yet. Add your first lead above!</p>
+              <p className="text-slate-600 mb-2">No leads found.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -343,14 +403,14 @@ const Leads = ({ user }: { user: User }) => {
                       <td className="py-4 px-4">
                         <div className="flex items-center gap-2">
                           <Building className="w-4 h-4 text-slate-400" />
-                          <span className="text-sm">{lead.company || '-'}</span>
+                          <span className="text-sm">{lead.company || "-"}</span>
                         </div>
                       </td>
                       <td className="py-4 px-4">
-                        <span className="text-sm">{lead.phone || '-'}</span>
+                        <span className="text-sm">{lead.phone || "-"}</span>
                       </td>
                       <td className="py-4 px-4">
-                        <span className="text-sm text-slate-600 capitalize">{lead.type || '-'}</span>
+                        <span className="text-sm text-slate-600 capitalize">{lead.type || "-"}</span>
                       </td>
                       <td className="py-4 px-4">
                         <Badge className={`${getStatusColor(lead.status)} text-white capitalize`}>
@@ -358,10 +418,10 @@ const Leads = ({ user }: { user: User }) => {
                         </Badge>
                       </td>
                       <td className="py-4 px-4">
-                        <Button 
-                          variant="ghost" 
+                        <Button
+                          variant="ghost"
                           size="sm"
-                          onClick={() => toast.info("Delete functionality coming soon")}
+                          onClick={() => toast.info("Delete lead coming next")}
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
