@@ -27,7 +27,6 @@ exports.handler = async (event) => {
     }
 
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
-    const now = new Date().toISOString();
 
     const record = await base("Campaigns").create(
       {
@@ -37,7 +36,6 @@ exports.handler = async (event) => {
         sent: 0,
         opened: 0,
         replied: 0,
-        createdAt: now,
       },
       { typecast: true }
     );
@@ -55,7 +53,7 @@ exports.handler = async (event) => {
           sent: Number(record.fields.sent || 0),
           opened: Number(record.fields.opened || 0),
           replied: Number(record.fields.replied || 0),
-          createdAt: record.fields.createdAt || now,
+          createdAt: record.fields.createdAt || "",
           startedAt: record.fields.startedAt || "",
           completedAt: record.fields.completedAt || "",
         },
