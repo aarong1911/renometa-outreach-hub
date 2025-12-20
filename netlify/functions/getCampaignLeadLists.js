@@ -25,7 +25,7 @@ exports.handler = async (event) => {
 
     const filterByFormula = `AND({userId}='${escapeFormulaString(user.uid)}', ARRAYJOIN({campaignId})='${escapeFormulaString(campaignId)}')`;
 
-    const links = await base("CampaignLeads")
+    const links = await base("CampaignLists")
       .select({
         filterByFormula,
         sort: [{ field: "createdAt", direction: "desc" }],

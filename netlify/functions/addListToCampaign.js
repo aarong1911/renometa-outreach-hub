@@ -25,26 +25,27 @@ exports.handler = async (event) => {
 
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 
-    // Avoid duplicates: find existing link
-    // Note: For linked record fields, use ARRAYJOIN to convert array to string for comparison
-    const filterByFormula = `AND(
-      {userId} = '${escapeFormulaString(user.uid)}',
-      ARRAYJOIN({campaignId}) = '${escapeFormulaString(campaignId)}',
-      ARRAYJOIN({listId}) = '${escapeFormulaString(listId)}'
-    )`;
-
-    const existing = await base("CampaignLeads")
+    // Check for existing link - fetch all records for this user
+    const allRecords = await base("CampaignLists")
       .select({
-        filterByFormula,
-        maxRecords: 1,
+        filterByFormula: `{userId} = '${escapeFormulaString(user.uid)}'`,
+        maxRecords: 100,
       })
       .all();
 
-    if (existing.length) {
-      return { statusCode: 200, headers, body: JSON.stringify({ success: true, alreadyLinked: true, id: existing[0].id }) };
+    // Check for existing link manually
+    const existing = allRecords.find((r) => {
+      const recCampaignId = Array.isArray(r.fields.campaignId) ? r.fields.campaignId[0] : r.fields.campaignId;
+      const recListId = Array.isArray(r.fields.listId) ? r.fields.listId[0] : r.fields.listId;
+      return recCampaignId === campaignId && recListId === listId;
+    });
+
+    if (existing) {
+      return { statusCode: 200, headers, body: JSON.stringify({ success: true, alreadyLinked: true, id: existing.id }) };
     }
 
-    const created = await base("CampaignLeads").create(
+    // Create new link
+    const created = await base("CampaignLists").create(
       {
         userId: user.uid,
         campaignId: [campaignId],
