@@ -5,20 +5,26 @@ const admin = require("firebase-admin");
 function getAdmin() {
   if (admin.apps.length) return admin;
 
-  if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-    throw new Error("Missing FIREBASE_SERVICE_ACCOUNT env var");
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new Error(
+      "Missing FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY env vars"
+    );
   }
 
-  const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-  if (sa.private_key && sa.private_key.includes("\\n")) {
-    sa.private_key = sa.private_key.replace(/\\n/g, "\n");
+  // handle \n escaping from Netlify UI
+  if (privateKey.includes("\\n")) {
+    privateKey = privateKey.replace(/\\n/g, "\n");
   }
 
   admin.initializeApp({
     credential: admin.credential.cert({
-      projectId: sa.project_id,
-      clientEmail: sa.client_email,
-      privateKey: sa.private_key,
+      projectId,
+      clientEmail,
+      privateKey,
     }),
   });
 
