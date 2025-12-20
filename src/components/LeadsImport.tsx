@@ -1,15 +1,20 @@
 // src/components/LeadsImport.tsx
 import { useEffect, useMemo, useState } from "react";
-import { User } from "firebase/auth";
+import type { User } from "firebase/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { Upload, FileText, CheckCircle, AlertCircle, ArrowRight, ArrowLeft } from "lucide-react";
 import { authedFetch } from "@/lib/api";
-import readXlsxFile from "read-excel-file";
 
 interface LeadsImportProps {
   user: User;
@@ -17,6 +22,7 @@ interface LeadsImportProps {
 }
 
 type Step = 1 | 2 | 3 | 4 | 5;
+type SourceMode = "csv" | "gsheet";
 
 interface PreviewData {
   headers: string[];
@@ -32,15 +38,13 @@ interface PreviewData {
   defaultListName?: string;
 }
 
-type SourceMode = "csv" | "xlsx" | "gsheet";
-
 const stripExt = (filename: string) => filename.replace(/\.[^/.]+$/, "");
 
 const fieldOptions = [
   { value: "email", label: "Email" },
   { value: "firstName", label: "First Name" },
   { value: "lastName", label: "Last Name" },
-  { value: "name", label: "Full Name" },
+  { value: "name", label: "Full Name" }, // will be split into first/last on backend
   { value: "company", label: "Company" },
   { value: "phone", label: "Phone" },
   { value: "website", label: "Website" },
@@ -65,82 +69,68 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
   const [importing, setImporting] = useState(false);
   const [duplicateAction, setDuplicateAction] = useState<"skip" | "update" | "import">("skip");
 
-  // LeadList naming
   const [listName, setListName] = useState("");
   const [creatingList, setCreatingList] = useState(false);
 
-  // Google Sheets
   const [gsheetUrlOrId, setGsheetUrlOrId] = useState("");
   const [gsheetTabName, setGsheetTabName] = useState("Sheet1");
 
-  const hasEmailMapping = useMemo(() => Object.values(fieldMapping).includes("email"), [fieldMapping]);
+  const hasEmailMapping = useMemo(
+    () => Object.values(fieldMapping).includes("email"),
+    [fieldMapping]
+  );
 
   const importSource = useMemo(() => {
     if (sourceType === "csv") return "csv-import";
-    if (sourceType === "xlsx") return "excel-import";
     return "gsheet-import";
   }, [sourceType]);
 
   useEffect(() => {
     if (!listName) {
-      if (sourceType !== "gsheet" && file?.name) setListName(stripExt(file.name));
-      if (sourceType === "gsheet" && gsheetUrlOrId) setListName(`Google Sheet - ${gsheetTabName || "Sheet1"}`);
+      if (sourceType === "csv" && file?.name) setListName(stripExt(file.name));
+      if (sourceType === "gsheet" && gsheetUrlOrId)
+        setListName(`Google Sheet - ${gsheetTabName || "Sheet1"}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file, sourceType, gsheetUrlOrId, gsheetTabName]);
 
-  const generatePreview = async (payload: any) => {
-    try {
-      const res = await authedFetch(user, "/.netlify/functions/importPreview", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+  const generateCsvPreview = async (csvText: string) => {
+    const res = await authedFetch(user, "/.netlify/functions/importPreview", {
+      method: "POST",
+      body: JSON.stringify({ fileType: "csv", fileContent: csvText }),
+    });
 
-      if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t || "Failed to generate preview");
-      }
-
-      const data = await res.json();
-      setPreviewData(data);
-      setFieldMapping(data.suggestedMapping || {});
-      if (!listName && data.defaultListName) setListName(data.defaultListName);
-      setStep(3);
-      toast.success("Source loaded successfully");
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to process source");
-    }
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    const extension = selectedFile.name.split(".").pop()?.toLowerCase();
-    if (extension !== "csv" && extension !== "xlsx") {
-      toast.error("Please upload a CSV or XLSX file");
+    const ext = selectedFile.name.split(".").pop()?.toLowerCase();
+    if (ext !== "csv") {
+      toast.error("Please upload a CSV file (XLSX temporarily disabled)");
       return;
     }
 
     setFile(selectedFile);
-    setSourceType(extension === "csv" ? "csv" : "xlsx");
+    setSourceType("csv");
     setListName(stripExt(selectedFile.name));
 
-    if (extension === "csv") {
-      const content = await selectedFile.text();
-      await generatePreview({ fileType: "csv", fileContent: content });
-      return;
+    try {
+      const csvText = await selectedFile.text();
+      const data = await generateCsvPreview(csvText);
+
+      setPreviewData(data);
+      setFieldMapping(data.suggestedMapping || {});
+      if (!listName && data.defaultListName) setListName(data.defaultListName);
+      setStep(3);
+      toast.success("CSV loaded successfully");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to process CSV");
     }
-
-    // xlsx -> base64
-    const buffer = await selectedFile.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    const base64 = btoa(binary);
-
-    await generatePreview({ fileType: "xlsx", fileContentBase64: base64 });
   };
 
   const generateGsheetPreview = async () => {
@@ -198,26 +188,33 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
           if (!mapped || mapped === "ignore" || mapped === "custom") return;
           lead[mapped] = (rowObj?.[header] ?? "").toString().trim();
         });
-
-        if (lead.firstName || lead.lastName) {
-          lead.name = `${lead.firstName || ""} ${lead.lastName || ""}`.trim();
-        }
         return lead;
       })
       .filter((l) => l.email);
   };
 
+  const parseCsvToRows = (csvText: string, headers: string[]) => {
+    const lines = csvText.split("\n").filter((l) => l.trim());
+    const rows: any[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cells = lines[i].split(",").map((c) => c.trim().replace(/['"]/g, ""));
+      const obj: any = {};
+      headers.forEach((h, idx) => (obj[h] = cells[idx] || ""));
+      rows.push(obj);
+    }
+
+    return rows;
+  };
+
   const handleImport = async () => {
     if (!previewData) return;
-
     if (!hasEmailMapping) return toast.error("Please map an Email field before importing");
 
     setImporting(true);
     try {
-      // 1) create list
       const listId = await createLeadList();
 
-      // 2) build leads
       let leads: any[] = [];
 
       if (sourceType === "gsheet") {
@@ -231,45 +228,14 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
 
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-
         leads = buildLeadsFromRows(data.rows || [], previewData.headers);
       } else {
         if (!file) throw new Error("No file selected");
-
-        if (sourceType === "csv") {
-          const csvText = await file.text();
-          const lines = csvText.split("\n").filter((l) => l.trim());
-          const rows = [];
-
-          // naive parse (matches your importPreview)
-          for (let i = 1; i < lines.length; i++) {
-            const cells = lines[i].split(",").map((c) => c.trim().replace(/['"]/g, ""));
-            const obj: any = {};
-            previewData.headers.forEach((h, idx) => (obj[h] = cells[idx] || ""));
-            rows.push(obj);
-          }
-
-          leads = buildLeadsFromRows(rows, previewData.headers);
-        } else {
-          // XLSX import uses backend preview; easiest: re-run preview export-like path by sending base64 again
-          const buffer = await file.arrayBuffer();
-          const bytes = new Uint8Array(buffer);
-          let binary = "";
-          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-          const base64 = btoa(binary);
-
-          // Ask importPreview to parse all rows for xlsx
-          const res = await authedFetch(user, "/.netlify/functions/importPreview", {
-            method: "POST",
-            body: JSON.stringify({ fileType: "xlsx", fileContentBase64: base64, fullExport: true }),
-          });
-          if (!res.ok) throw new Error(await res.text());
-          const parsed = await res.json();
-          leads = buildLeadsFromRows(parsed.allRows || [], previewData.headers);
-        }
+        const csvText = await file.text();
+        const rows = parseCsvToRows(csvText, previewData.headers);
+        leads = buildLeadsFromRows(rows, previewData.headers);
       }
 
-      // 3) bulk add
       const res = await authedFetch(user, "/.netlify/functions/bulkAddLeads", {
         method: "POST",
         body: JSON.stringify({
@@ -284,7 +250,12 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
       const result = await res.json();
 
       setStep(5);
-      toast.success(`Imported ${result.imported} leads into "${listName.trim()}"`);
+      toast.success(
+        `Imported ${result.imported} leads` +
+          (result.updated ? `, updated ${result.updated}` : "") +
+          (result.skipped ? `, skipped ${result.skipped}` : "") +
+          ` into "${listName.trim()}"`
+      );
     } catch (err) {
       console.error(err);
       toast.error("Failed to import leads");
@@ -302,7 +273,14 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Button variant="outline" className="h-32 flex flex-col gap-2" onClick={() => { setSourceType("csv"); setStep(2); }}>
+            <Button
+              variant="outline"
+              className="h-32 flex flex-col gap-2"
+              onClick={() => {
+                setSourceType("csv");
+                setStep(2);
+              }}
+            >
               <FileText className="w-8 h-8" />
               <div>
                 <p className="font-semibold">CSV File</p>
@@ -310,15 +288,28 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
               </div>
             </Button>
 
-            <Button variant="outline" className="h-32 flex flex-col gap-2" onClick={() => { setSourceType("xlsx"); setStep(2); }}>
+            <Button
+              variant="outline"
+              className="h-32 flex flex-col gap-2 opacity-60 cursor-not-allowed"
+              disabled
+            >
               <FileText className="w-8 h-8 text-green-600" />
               <div>
                 <p className="font-semibold">Excel File</p>
-                <p className="text-xs text-slate-500">Upload .xlsx file</p>
+                <p className="text-xs text-slate-500">
+                  Disabled (xlsx advisory). Export to CSV.
+                </p>
               </div>
             </Button>
 
-            <Button variant="outline" className="h-32 flex flex-col gap-2" onClick={() => { setSourceType("gsheet"); setStep(2); }}>
+            <Button
+              variant="outline"
+              className="h-32 flex flex-col gap-2"
+              onClick={() => {
+                setSourceType("gsheet");
+                setStep(2);
+              }}
+            >
               <FileText className="w-8 h-8 text-blue-600" />
               <div>
                 <p className="font-semibold">Google Sheets</p>
@@ -336,7 +327,7 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Import Leads - {sourceType === "gsheet" ? "Google Sheets" : "Upload File"}</CardTitle>
+          <CardTitle>Import Leads - {sourceType === "gsheet" ? "Google Sheets" : "Upload CSV"}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -344,11 +335,19 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
               <div className="space-y-3">
                 <div>
                   <Label>Spreadsheet URL or ID</Label>
-                  <Input value={gsheetUrlOrId} onChange={(e) => setGsheetUrlOrId(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/... or the ID" />
+                  <Input
+                    value={gsheetUrlOrId}
+                    onChange={(e) => setGsheetUrlOrId(e.target.value)}
+                    placeholder="https://docs.google.com/spreadsheets/d/... or the ID"
+                  />
                 </div>
                 <div>
                   <Label>Tab name (sheet)</Label>
-                  <Input value={gsheetTabName} onChange={(e) => setGsheetTabName(e.target.value)} placeholder="Sheet1" />
+                  <Input
+                    value={gsheetTabName}
+                    onChange={(e) => setGsheetTabName(e.target.value)}
+                    placeholder="Sheet1"
+                  />
                 </div>
 
                 <div className="flex gap-2">
@@ -364,7 +363,7 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
               <>
                 <div className="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center">
                   <Upload className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-                  <p className="text-lg font-semibold mb-2">Drop your {sourceType.toUpperCase()} file here</p>
+                  <p className="text-lg font-semibold mb-2">Drop your CSV file here</p>
                   <p className="text-sm text-slate-500 mb-4">or</p>
                   <Label htmlFor="file-upload" className="cursor-pointer">
                     <div className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
@@ -373,7 +372,7 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
                     <input
                       id="file-upload"
                       type="file"
-                      accept={sourceType === "csv" ? ".csv" : ".xlsx"}
+                      accept=".csv"
                       onChange={handleFileSelect}
                       className="hidden"
                     />
@@ -410,7 +409,7 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
         <CardContent>
           <div className="space-y-4">
             <p className="text-sm text-slate-600">
-              Map your columns to lead fields. Preview showing {previewData.sampleRows.length} of {previewData.totalRows} rows.
+              Preview showing {previewData.sampleRows.length} of {previewData.totalRows} rows.
             </p>
 
             <div className="space-y-3">
@@ -420,13 +419,22 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
                     <Label className="font-medium">{header}</Label>
                     <p className="text-xs text-slate-500">{previewData.sampleRows[0]?.[header] || "N/A"}</p>
                   </div>
+
                   <ArrowRight className="w-4 h-4 text-slate-400" />
+
                   <div className="w-1/3">
-                    <Select value={fieldMapping[header]} onValueChange={(value) => setFieldMapping({ ...fieldMapping, [header]: value })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                    <Select
+                      value={fieldMapping[header]}
+                      onValueChange={(value) => setFieldMapping({ ...fieldMapping, [header]: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
                         {fieldOptions.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -497,7 +505,9 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
               <div className="space-y-2">
                 <Label>Handle Duplicates</Label>
                 <Select value={duplicateAction} onValueChange={(v: any) => setDuplicateAction(v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="skip">Skip Duplicates</SelectItem>
                     <SelectItem value="update">Update Existing</SelectItem>
@@ -511,7 +521,10 @@ export default function LeadsImport({ user, onComplete }: LeadsImportProps) {
               <Button variant="outline" onClick={() => setStep(3)}>
                 <ArrowLeft className="w-4 h-4 mr-2" /> Back
               </Button>
-              <Button onClick={handleImport} disabled={!hasEmailMapping || importing || creatingList || !listName.trim()}>
+              <Button
+                onClick={handleImport}
+                disabled={!hasEmailMapping || importing || creatingList || !listName.trim()}
+              >
                 {importing ? "Importing..." : `Import ${previewData.validation.validCount} Leads`}
               </Button>
             </div>

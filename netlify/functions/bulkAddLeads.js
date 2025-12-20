@@ -1,9 +1,17 @@
 // netlify/functions/bulkAddLeads.js
+// Bulk add leads to Airtable and attach to a LeadList (AUTH via Firebase ID token)
+
 const Airtable = require("airtable");
 const { requireUser } = require("./_lib/auth");
 
-function escapeAirtableString(value) {
+function escapeFormulaString(value) {
   return String(value || "").replace(/'/g, "\\'");
+}
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 exports.handler = async (event) => {
@@ -23,91 +31,138 @@ exports.handler = async (event) => {
     const payload = JSON.parse(event.body || "{}");
     const { leads, listId, source, duplicateAction } = payload;
 
-    if (!listId) return { statusCode: 400, headers, body: JSON.stringify({ error: "listId is required" }) };
+    if (!listId) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: "listId is required" }) };
+    }
     if (!Array.isArray(leads) || leads.length === 0) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: "No leads provided" }) };
     }
 
-    const action = (duplicateAction || "skip").toString(); // skip | update | import
     const importSource = (source || "csv-import").toString();
+    const mode = (duplicateAction || "skip").toString(); // skip | update | import
+
+    const cleanedLeads = leads
+      .map((l) => {
+        const firstName = (l.firstName || "").toString().trim();
+        const lastName = (l.lastName || "").toString().trim();
+
+        // If frontend mapped "name", we can split it safely into first/last
+        const fullName = (l.name || "").toString().trim();
+        let fn = firstName;
+        let ln = lastName;
+        if ((!fn || !ln) && fullName) {
+          const parts = fullName.split(/\s+/).filter(Boolean);
+          if (!fn && parts.length) fn = parts[0];
+          if (!ln && parts.length > 1) ln = parts.slice(1).join(" ");
+        }
+
+        return {
+          firstName: fn,
+          lastName: ln,
+          email: (l.email || "").toString().trim().toLowerCase(),
+          company: (l.company || "").toString().trim(),
+          phone: (l.phone || "").toString().trim(),
+          website: (l.website || "").toString().trim(),
+          address: (l.address || "").toString().trim(),
+          city: (l.city || "").toString().trim(),
+          state: (l.state || "").toString().trim(),
+          zip: (l.zip || "").toString().trim(),
+          type: (l.type || "").toString().trim(),
+          rating: Number.parseFloat(l.rating) || 0,
+          reviews: Number.parseInt(l.reviews, 10) || 0,
+          notes: (l.notes || "").toString().trim(),
+          status: (l.status || "new").toString(),
+        };
+      })
+      .filter((l) => l.email); // email required
+
+    if (cleanedLeads.length === 0) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: "No valid leads (email required)" }) };
+    }
 
     Airtable.configure({ apiKey: process.env.AIRTABLE_API_KEY });
     const base = Airtable.base(process.env.AIRTABLE_BASE_ID);
 
-    // Normalize leads
-    const cleaned = leads
-      .map((l) => ({
-        firstName: (l.firstName || "").toString().trim(),
-        lastName: (l.lastName || "").toString().trim(),
-        name: (l.name || "").toString().trim(),
-        email: (l.email || "").toString().trim().toLowerCase(),
-        company: (l.company || "").toString().trim(),
-        phone: (l.phone || "").toString().trim(),
-        website: (l.website || "").toString().trim(),
-        address: (l.address || "").toString().trim(),
-        city: (l.city || "").toString().trim(),
-        state: (l.state || "").toString().trim(),
-        zip: (l.zip || "").toString().trim(),
-        type: (l.type || "").toString().trim(),
-        rating: Number.parseFloat(l.rating) || 0,
-        reviews: Number.parseInt(l.reviews, 10) || 0,
-      }))
-      .filter((l) => l.email);
+    // Fetch existing records by email (only for emails being imported)
+    const emailToExisting = new Map(); // email -> { id, listIds: [] }
+    const emailChunks = chunk(
+      Array.from(new Set(cleanedLeads.map((l) => l.email))).filter(Boolean),
+      40
+    );
 
-    if (!cleaned.length) {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: "No valid leads (email required)" }) };
+    for (const emails of emailChunks) {
+      const orParts = emails.map((e) => `{email} = '${escapeFormulaString(e)}'`).join(", ");
+      const filterByFormula = `AND({userId} = '${escapeFormulaString(user.uid)}', OR(${orParts}))`;
+
+      // eslint-disable-next-line no-await-in-loop
+      const existing = await base("Leads")
+        .select({
+          filterByFormula,
+          fields: ["email", "listId"],
+          maxRecords: 1000,
+        })
+        .all();
+
+      existing.forEach((r) => {
+        const f = r.fields || {};
+        const email = (f.email || "").toString().toLowerCase();
+        if (!email) return;
+
+        const existingList = Array.isArray(f.listId) ? f.listId : [];
+        emailToExisting.set(email, { id: r.id, listIds: existingList });
+      });
     }
 
-    // For duplicate handling, build email->recordId map of existing leads for this user
-    const existingRecords = await base("Leads")
-      .select({
-        filterByFormula: `{userId} = '${escapeAirtableString(user.uid)}'`,
-        fields: ["email"],
-      })
-      .all();
+    const now = new Date().toISOString();
 
-    const existingMap = new Map();
-    for (const r of existingRecords) {
-      const email = r.fields?.email ? String(r.fields.email).toLowerCase().trim() : "";
-      if (email) existingMap.set(email, r.id);
-    }
-
-    let toCreate = [];
-    let toUpdate = [];
+    const toCreate = [];
+    const toUpdate = [];
     let skipped = 0;
 
-    for (const lead of cleaned) {
-      const existingId = existingMap.get(lead.email);
+    for (const lead of cleanedLeads) {
+      const existing = emailToExisting.get(lead.email);
 
-      if (existingId) {
-        if (action === "import") {
-          // import anyway -> create duplicate record
-          toCreate.push(lead);
-        } else if (action === "update") {
-          toUpdate.push({ id: existingId, lead });
-        } else {
+      if (existing) {
+        if (mode === "skip") {
           skipped++;
+          continue;
         }
-      } else {
-        toCreate.push(lead);
+
+        if (mode === "update") {
+          const nextListIds = Array.from(new Set([...(existing.listIds || []), listId]));
+          toUpdate.push({
+            id: existing.id,
+            fields: {
+              firstName: lead.firstName,
+              lastName: lead.lastName,
+              email: lead.email,
+              company: lead.company || "",
+              phone: lead.phone || "",
+              website: lead.website || "",
+              address: lead.address || "",
+              city: lead.city || "",
+              state: lead.state || "",
+              zip: lead.zip || "",
+              type: lead.type || "",
+              rating: lead.rating || 0,
+              reviews: lead.reviews || 0,
+              notes: lead.notes || "",
+              status: lead.status || "new",
+              source: importSource,
+              userId: user.uid,
+              listId: nextListIds, // keep old + add new list
+            },
+          });
+          continue;
+        }
+
+        // mode === "import" => allow duplicates, create new record
       }
-    }
 
-    const chunkSize = 10; // Airtable max
-    let imported = 0;
-    let updated = 0;
-    const createdIds = [];
-    const updatedIds = [];
-
-    // CREATE
-    for (let i = 0; i < toCreate.length; i += chunkSize) {
-      const chunk = toCreate.slice(i, i + chunkSize);
-
-      const recordsToCreate = chunk.map((lead) => ({
+      toCreate.push({
         fields: {
           firstName: lead.firstName,
           lastName: lead.lastName,
-          name: lead.name,
           email: lead.email,
           company: lead.company || "",
           phone: lead.phone || "",
@@ -119,49 +174,31 @@ exports.handler = async (event) => {
           type: lead.type || "",
           rating: lead.rating || 0,
           reviews: lead.reviews || 0,
-          status: "new",
+          notes: lead.notes || "",
+          status: lead.status || "new",
           source: importSource,
           userId: user.uid,
-          listId: [listId], // linked record
-        },
-      }));
-
-      // eslint-disable-next-line no-await-in-loop
-      const created = await base("Leads").create(recordsToCreate, { typecast: true });
-      created.forEach((r) => createdIds.push(r.id));
-      imported += created.length;
-    }
-
-    // UPDATE
-    for (let i = 0; i < toUpdate.length; i += chunkSize) {
-      const chunk = toUpdate.slice(i, i + chunkSize);
-
-      const updates = chunk.map((x) => ({
-        id: x.id,
-        fields: {
-          firstName: x.lead.firstName,
-          lastName: x.lead.lastName,
-          name: x.lead.name,
-          company: x.lead.company || "",
-          phone: x.lead.phone || "",
-          website: x.lead.website || "",
-          address: x.lead.address || "",
-          city: x.lead.city || "",
-          state: x.lead.state || "",
-          zip: x.lead.zip || "",
-          type: x.lead.type || "",
-          rating: x.lead.rating || 0,
-          reviews: x.lead.reviews || 0,
-          // keep status, but update source and attach list:
-          source: importSource,
+          createdAt: now,
+          // Linked record field -> array of record IDs
           listId: [listId],
         },
-      }));
+      });
+    }
 
+    const createdIds = [];
+    const updatedIds = [];
+
+    // Airtable API max batch size = 10
+    for (const batch of chunk(toCreate, 10)) {
       // eslint-disable-next-line no-await-in-loop
-      const upd = await base("Leads").update(updates, { typecast: true });
-      upd.forEach((r) => updatedIds.push(r.id));
-      updated += upd.length;
+      const created = await base("Leads").create(batch, { typecast: true });
+      created.forEach((r) => createdIds.push(r.id));
+    }
+
+    for (const batch of chunk(toUpdate, 10)) {
+      // eslint-disable-next-line no-await-in-loop
+      const updated = await base("Leads").update(batch, { typecast: true });
+      updated.forEach((r) => updatedIds.push(r.id));
     }
 
     return {
@@ -169,8 +206,8 @@ exports.handler = async (event) => {
       headers,
       body: JSON.stringify({
         success: true,
-        imported,
-        updated,
+        imported: createdIds.length,
+        updated: updatedIds.length,
         skipped,
         leadIds: createdIds,
         updatedIds,

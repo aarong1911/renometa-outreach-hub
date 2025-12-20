@@ -1,211 +1,10 @@
 // netlify/functions/importPreview.js
-// Generate preview + suggested mapping + validation (duplicates checked against Airtable)
+// Preview import: accepts CSV text OR (headers + sampleRows)
+// Auth via Firebase ID token
 
 const Airtable = require("airtable");
 const { requireUser } = require("./_lib/auth");
 
-exports.handler = async (event) => {
-  const headersOut = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-  };
-
-  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: headersOut, body: "" };
-  if (event.httpMethod !== "POST") {
-    return { statusCode: 405, headers: headersOut, body: JSON.stringify({ error: "Method not allowed" }) };
-  }
-
-  try {
-    const user = await requireUser(event);
-    const body = JSON.parse(event.body || "{}");
-
-    // Accept either:
-    // - { headers: string[], rows: object[] }
-    // - { fileType: "csv", fileContent: "..." }
-    const inputHeaders = Array.isArray(body.headers) ? body.headers : null;
-    const inputRows = Array.isArray(body.rows) ? body.rows : null;
-
-    let headers = [];
-    let rows = [];
-
-    if (inputHeaders && inputRows) {
-      headers = inputHeaders.map((h) => String(h || "").trim()).filter(Boolean);
-      rows = inputRows.map((r) => r || {});
-    } else if (body.fileType === "csv" && typeof body.fileContent === "string") {
-      const parsed = parseCsvToObjects(body.fileContent);
-      headers = parsed.headers;
-      rows = parsed.rows;
-    } else {
-      return {
-        statusCode: 400,
-        headers: headersOut,
-        body: JSON.stringify({ error: "Provide {headers, rows} or {fileType:'csv', fileContent}" }),
-      };
-    }
-
-    if (!headers.length) {
-      return { statusCode: 200, headers: headersOut, body: JSON.stringify({ headers: [], sampleRows: [], suggestedMapping: {}, totalRows: 0, validation: emptyValidation() }) };
-    }
-
-    const suggestedMapping = autoMapHeaders(headers);
-
-    const sampleRows = rows.slice(0, 20).map((r) => normalizeRowObject(r, headers));
-    const totalRows = rows.length;
-
-    const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
-
-    // Fetch existing emails for this user (for duplicate detection)
-    const records = await base("Leads")
-      .select({
-        filterByFormula: `{userId} = '${escapeAirtableString(user.uid)}'`,
-        fields: ["email"],
-      })
-      .all();
-
-    const existingEmails = new Set(
-      records
-        .map((r) => (r.fields?.email ? String(r.fields.email).toLowerCase().trim() : ""))
-        .filter(Boolean)
-    );
-
-    // validate all rows (cap to avoid huge payload performance issues)
-    const MAX_VALIDATE = 10000;
-    const rowsToValidate = rows.slice(0, MAX_VALIDATE).map((r) => normalizeRowObject(r, headers));
-    const validation = validateRows(rowsToValidate, suggestedMapping, existingEmails);
-
-    const defaultListName =
-      typeof body.defaultListName === "string" && body.defaultListName.trim()
-        ? body.defaultListName.trim()
-        : undefined;
-
-    return {
-      statusCode: 200,
-      headers: headersOut,
-      body: JSON.stringify({
-        headers,
-        sampleRows,
-        suggestedMapping,
-        totalRows,
-        validation,
-        defaultListName,
-      }),
-    };
-  } catch (error) {
-    console.error("importPreview error:", error);
-    return {
-      statusCode: 500,
-      headers: headersOut,
-      body: JSON.stringify({ error: "Failed to preview import", details: error.message }),
-    };
-  }
-};
-
-function emptyValidation() {
-  return { validCount: 0, invalidEmailCount: 0, duplicateCount: 0, errors: [], totalErrors: 0 };
-}
-
-function escapeAirtableString(value) {
-  return String(value || "").replace(/'/g, "\\'");
-}
-
-function normalizeRowObject(row, headers) {
-  const obj = {};
-  headers.forEach((h) => {
-    obj[h] = row?.[h] ?? "";
-  });
-  return obj;
-}
-
-// Robust-ish CSV parser (quoted commas supported)
-function parseCsvToObjects(csvText) {
-  const text = String(csvText || "").replace(/^\uFEFF/, "");
-  const rows = [];
-  let i = 0;
-  let field = "";
-  let row = [];
-  let inQuotes = false;
-
-  const pushField = () => {
-    row.push(field);
-    field = "";
-  };
-  const pushRow = () => {
-    const nonEmpty = row.some((c) => String(c ?? "").trim() !== "");
-    if (nonEmpty) rows.push(row);
-    row = [];
-  };
-
-  while (i < text.length) {
-    const c = text[i];
-
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i += 2;
-          continue;
-        }
-        inQuotes = false;
-        i++;
-        continue;
-      }
-      field += c;
-      i++;
-      continue;
-    }
-
-    if (c === '"') {
-      inQuotes = true;
-      i++;
-      continue;
-    }
-
-    if (c === ",") {
-      pushField();
-      i++;
-      continue;
-    }
-
-    if (c === "\r") {
-      if (text[i + 1] === "\n") i++;
-      pushField();
-      pushRow();
-      i++;
-      continue;
-    }
-
-    if (c === "\n") {
-      pushField();
-      pushRow();
-      i++;
-      continue;
-    }
-
-    field += c;
-    i++;
-  }
-
-  pushField();
-  pushRow();
-
-  if (!rows.length) return { headers: [], rows: [] };
-
-  const headers = (rows[0] || []).map((h) => String(h || "").trim()).filter(Boolean);
-  const data = rows.slice(1);
-
-  const objects = data.map((r) => {
-    const obj = {};
-    headers.forEach((h, idx) => {
-      obj[h] = String(r[idx] ?? "").trim();
-    });
-    return obj;
-  });
-
-  return { headers, rows: objects };
-}
-
-// Auto-map headers to standard fields
 function autoMapHeaders(headers) {
   const mapping = {};
 
@@ -224,6 +23,7 @@ function autoMapHeaders(headers) {
     type: ["industry", "type", "category", "sector"],
     rating: ["rating", "stars", "score"],
     reviews: ["reviews", "review_count", "review count", "total reviews"],
+    notes: ["notes", "note", "comments", "comment"],
   };
 
   headers.forEach((header) => {
@@ -250,36 +50,33 @@ function validateRows(rows, mapping, existingEmails) {
   let duplicateCount = 0;
   const errors = [];
 
-  const emailColumn = Object.keys(mapping).find((key) => mapping[key] === "email");
+  const emailColumn = Object.keys(mapping).find((k) => mapping[k] === "email");
 
-  for (let idx = 0; idx < rows.length; idx++) {
-    const row = rows[idx];
-    const rowNumber = idx + 2; // assuming headers are row 1
-
-    const raw = emailColumn ? row[emailColumn] : "";
-    const email = String(raw || "").toLowerCase().trim();
+  rows.forEach((row, idx) => {
+    const rawEmail = emailColumn ? row?.[emailColumn] : "";
+    const email = String(rawEmail || "").trim().toLowerCase();
 
     if (!email) {
       invalidEmailCount++;
-      errors.push({ row: rowNumber, error: "Missing email" });
-      continue;
+      errors.push({ row: idx + 2, error: "Missing email" });
+      return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       invalidEmailCount++;
-      errors.push({ row: rowNumber, error: "Invalid email format" });
-      continue;
+      errors.push({ row: idx + 2, error: "Invalid email format" });
+      return;
     }
 
     if (existingEmails.has(email)) {
       duplicateCount++;
-      errors.push({ row: rowNumber, error: "Duplicate email (already in system)" });
-      continue;
+      errors.push({ row: idx + 2, error: "Duplicate email (already in system)" });
+      return;
     }
 
     validCount++;
-  }
+  });
 
   return {
     validCount,
@@ -289,3 +86,98 @@ function validateRows(rows, mapping, existingEmails) {
     totalErrors: errors.length,
   };
 }
+
+exports.handler = async (event) => {
+  const headers = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+
+  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers, body: "" };
+  if (event.httpMethod !== "POST") {
+    return { statusCode: 405, headers, body: JSON.stringify({ error: "Method not allowed" }) };
+  }
+
+  try {
+    const user = await requireUser(event);
+    const uid = user.uid;
+
+    const { fileType, fileContent, headers: inputHeaders, sampleRows: inputSampleRows, totalRows: inputTotalRows } =
+      JSON.parse(event.body || "{}");
+
+    let parsedHeaders = [];
+    let sampleRows = [];
+    let totalRows = 0;
+
+    if (fileType === "csv") {
+      if (!fileContent) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "fileContent is required for CSV" }) };
+      }
+
+      const lines = String(fileContent).split("\n").filter((line) => line.trim());
+      if (!lines.length) return { statusCode: 400, headers, body: JSON.stringify({ error: "File is empty" }) };
+
+      parsedHeaders = lines[0].split(",").map((h) => h.trim().replace(/['"]/g, ""));
+      totalRows = Math.max(0, lines.length - 1);
+
+      const maxPreview = Math.min(20, totalRows);
+      for (let i = 1; i <= maxPreview; i++) {
+        const row = lines[i].split(",").map((c) => c.trim().replace(/['"]/g, ""));
+        const obj = {};
+        parsedHeaders.forEach((h, idx) => (obj[h] = row[idx] || ""));
+        sampleRows.push(obj);
+      }
+    } else {
+      // XLSX preview (or any client-parsed source): headers + sampleRows are provided directly
+      if (!Array.isArray(inputHeaders) || inputHeaders.length === 0) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "headers[] is required" }) };
+      }
+      if (!Array.isArray(inputSampleRows)) {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "sampleRows[] is required" }) };
+      }
+
+      parsedHeaders = inputHeaders.map((h) => String(h || "").trim()).filter(Boolean);
+      sampleRows = inputSampleRows.slice(0, 20);
+      totalRows = Number(inputTotalRows || inputSampleRows.length || 0);
+    }
+
+    const suggestedMapping = autoMapHeaders(parsedHeaders);
+
+    // Existing emails for this user (duplicate detection)
+    const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
+
+    const existingRecords = await base("Leads")
+      .select({
+        filterByFormula: `{userId} = '${String(uid).replace(/'/g, "\\'")}'`,
+        fields: ["email"],
+      })
+      .all();
+
+    const existingEmails = new Set(
+      existingRecords.map((r) => String(r.fields.email || "").toLowerCase()).filter(Boolean)
+    );
+
+    const validation = validateRows(sampleRows, suggestedMapping, existingEmails);
+
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        headers: parsedHeaders,
+        sampleRows,
+        suggestedMapping,
+        totalRows,
+        validation,
+        existingEmailCount: existingEmails.size,
+      }),
+    };
+  } catch (error) {
+    console.error("importPreview error:", error);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: "Failed to preview import", details: error.message }),
+    };
+  }
+};
