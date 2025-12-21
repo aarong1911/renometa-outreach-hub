@@ -1,10 +1,7 @@
 // netlify/functions/getCampaignLeadLists.js
+// Simplified version that avoids Airtable formula issues
 const Airtable = require("airtable");
 const { requireUser } = require("./_lib/auth");
-
-function escapeFormulaString(value) {
-  return String(value || "").replace(/'/g, "\\'");
-}
 
 exports.handler = async (event) => {
   const headers = {
@@ -23,14 +20,17 @@ exports.handler = async (event) => {
 
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 
-    const filterByFormula = `AND({userId}='${escapeFormulaString(user.uid)}', ARRAYJOIN({campaignId})='${escapeFormulaString(campaignId)}')`;
-
-    const links = await base("CampaignLists")
-      .select({
-        filterByFormula,
-        sort: [{ field: "createdAt", direction: "desc" }],
-      })
+    // Get all CampaignLists links (no filter, we'll filter in code)
+    const allLinks = await base("CampaignLists")
+      .select({ pageSize: 100 })
       .all();
+
+    // Filter in JavaScript
+    const links = allLinks.filter((r) => {
+      if (r.fields.userId !== user.uid) return false;
+      const recCampaignId = Array.isArray(r.fields.campaignId) ? r.fields.campaignId[0] : r.fields.campaignId;
+      return recCampaignId === campaignId;
+    });
 
     // listId is a linked record array
     const listIds = links
@@ -47,7 +47,7 @@ exports.handler = async (event) => {
           id: rec.id, 
           name: rec.fields.name || "", 
           source: rec.fields.source || "manual",
-          leadCount: rec.fields.leadCount || 0
+          leadCount: 0 // Will be calculated if needed
         });
       } catch (err) {
         console.error(`Error fetching list ${id}:`, err);

@@ -1,10 +1,7 @@
 // netlify/functions/getCampaignAccounts.js
+// Simplified version that avoids Airtable formula issues
 const Airtable = require("airtable");
 const { requireUser } = require("./_lib/auth");
-
-function escapeFormulaString(value) {
-  return String(value || "").replace(/'/g, "\\'");
-}
 
 exports.handler = async (event) => {
   const headers = {
@@ -34,14 +31,17 @@ exports.handler = async (event) => {
       return { statusCode: 403, headers, body: JSON.stringify({ error: "Forbidden" }) };
     }
 
-    const filterByFormula = `AND(
-      {userId} = '${escapeFormulaString(user.uid)}',
-      ARRAYJOIN({campaignId}) = '${escapeFormulaString(campaignId)}'
-    )`;
-
-    const links = await base("CampaignAccounts")
-      .select({ filterByFormula })
+    // Get all CampaignAccounts links (no filter, we'll filter in code)
+    const allLinks = await base("CampaignAccounts")
+      .select({ pageSize: 100 })
       .all();
+
+    // Filter in JavaScript
+    const links = allLinks.filter((r) => {
+      if (r.fields.userId !== user.uid) return false;
+      const recCampaignId = Array.isArray(r.fields.campaignId) ? r.fields.campaignId[0] : r.fields.campaignId;
+      return recCampaignId === campaignId;
+    });
 
     // Get account IDs
     const accountIds = links
