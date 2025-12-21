@@ -6,7 +6,7 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { Loader2 } from "lucide-react";
 
 interface ProtectedRouteProps {
-  children: React.ReactNode;
+  children: (user: User) => React.ReactNode;
 }
 
 const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
@@ -34,7 +34,7 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
     return <Navigate to="/" replace />;
   }
 
-  return <>{children}</>;
+  return <>{children(user)}</>;
 };
 
 export default ProtectedRoute;
