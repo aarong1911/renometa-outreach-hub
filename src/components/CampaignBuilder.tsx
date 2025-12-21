@@ -46,8 +46,10 @@ import {
   Eye,
   ChevronLeft,
   FileText,
+  Settings as SettingsIcon,
 } from "lucide-react";
 import { authedFetch } from "@/lib/authedFetch";
+import CampaignSettings from "./CampaignSettings";
 
 interface CampaignBuilderProps {
   user: User;
@@ -127,6 +129,8 @@ export default function CampaignBuilder({
 
   const [listDialogOpen, setListDialogOpen] = useState(false);
   const [selectedListId, setSelectedListId] = useState("");
+
+  const [currentView, setCurrentView] = useState<"builder" | "settings">("builder");
 
   useEffect(() => {
     loadData();
@@ -450,6 +454,25 @@ export default function CampaignBuilder({
     }
   };
 
+  const deleteStep = async (stepId: string) => {
+    if (!confirm("Delete this email step? This cannot be undone.")) return;
+
+    try {
+      const res = await authedFetch(user, "/.netlify/functions/deleteCampaignStep", {
+        method: "POST",
+        body: JSON.stringify({ stepId }),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+
+      toast.success("Step deleted");
+      await loadSteps();
+    } catch (error) {
+      console.error("Error deleting step:", error);
+      toast.error("Failed to delete step");
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -472,9 +495,35 @@ export default function CampaignBuilder({
             <p className="text-slate-600 mt-1">Campaign Builder</p>
           </div>
         </div>
+        
+        {/* View Tabs */}
+        <div className="flex gap-2">
+          <Button
+            variant={currentView === "builder" ? "default" : "outline"}
+            onClick={() => setCurrentView("builder")}
+          >
+            <Mail className="w-4 h-4 mr-2" />
+            Builder
+          </Button>
+          <Button
+            variant={currentView === "settings" ? "default" : "outline"}
+            onClick={() => setCurrentView("settings")}
+          >
+            <SettingsIcon className="w-4 h-4 mr-2" />
+            Settings
+          </Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Show Settings or Builder based on current view */}
+      {currentView === "settings" ? (
+        <CampaignSettings
+          user={user}
+          campaignId={campaignId}
+          campaignName={campaignName}
+        />
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Content - Email Sequence */}
         <div className="lg:col-span-2 space-y-6">
           <Card>
@@ -557,6 +606,15 @@ export default function CampaignBuilder({
                               <Edit className="w-4 h-4 mr-2" />
                               Edit
                             </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                              onClick={() => step.id && deleteStep(step.id)}
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete
+                            </Button>
                           </div>
                         </div>
                       </AccordionContent>
@@ -595,8 +653,9 @@ export default function CampaignBuilder({
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-red-600 hover:text-red-700 hover:bg-red-50"
+                      className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
                       onClick={() => removeAccount(account.id)}
+                      title="Remove account"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -668,8 +727,9 @@ export default function CampaignBuilder({
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-red-600 hover:text-red-700 hover:bg-red-50"
+                    className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
                     onClick={() => removeList(list.id)}
+                    title="Remove list"
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -719,7 +779,8 @@ export default function CampaignBuilder({
             </CardContent>
           </Card>
         </div>
-      </div>
+        </div>
+      )}
 
       {/* Step Editor Dialog */}
       <Dialog open={stepDialogOpen} onOpenChange={setStepDialogOpen}>
@@ -840,24 +901,44 @@ export default function CampaignBuilder({
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-4">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setStepDialogOpen(false);
-                    setEditingStep(null);
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button onClick={() => previewStepWithMergeData(editingStep)} variant="outline">
-                  <Eye className="w-4 h-4 mr-2" />
-                  Preview
-                </Button>
-                <Button onClick={saveStep} disabled={saving}>
-                  <Save className="w-4 h-4 mr-2" />
-                  {saving ? "Saving..." : "Save Step"}
-                </Button>
+              <div className="flex justify-between gap-2 pt-4">
+                <div>
+                  {editingStep?.id && (
+                    <Button
+                      variant="outline"
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                      onClick={() => {
+                        if (editingStep.id) {
+                          setStepDialogOpen(false);
+                          setEditingStep(null);
+                          deleteStep(editingStep.id);
+                        }
+                      }}
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete Step
+                    </Button>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setStepDialogOpen(false);
+                      setEditingStep(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button onClick={() => previewStepWithMergeData(editingStep)} variant="outline">
+                    <Eye className="w-4 h-4 mr-2" />
+                    Preview
+                  </Button>
+                  <Button onClick={saveStep} disabled={saving}>
+                    <Save className="w-4 h-4 mr-2" />
+                    {saving ? "Saving..." : "Save Step"}
+                  </Button>
+                </div>
               </div>
             </div>
           )}
