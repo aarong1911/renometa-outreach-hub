@@ -42,6 +42,7 @@ import {
   Pause,
   List,
   Settings,
+  Trash2,
 } from "lucide-react";
 import { authedFetch } from "@/lib/authedFetch";
 import CampaignBuilder from "./CampaignBuilder";
@@ -281,6 +282,34 @@ const Campaigns = ({ user }: { user: User }) => {
             : c
         )
       );
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const deleteCampaign = async (campaign: Campaign) => {
+    if (!confirm(`Delete campaign "${campaign.name}"? This will delete all steps, assigned accounts, and lists. This cannot be undone.`)) {
+      return;
+    }
+
+    setUpdatingId(campaign.id);
+
+    try {
+      const res = await authedFetch(user, "/.netlify/functions/deleteCampaign", {
+        method: "POST",
+        body: JSON.stringify({ campaignId: campaign.id }),
+      });
+
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || "Failed to delete campaign");
+      }
+
+      toast.success("Campaign deleted");
+      await loadCampaigns(false);
+    } catch (err) {
+      console.error("Delete campaign error:", err);
+      toast.error("Failed to delete campaign");
     } finally {
       setUpdatingId(null);
     }
@@ -592,6 +621,17 @@ const Campaigns = ({ user }: { user: User }) => {
                                 Pause
                               </Button>
                             )}
+
+                            {/* Delete Button */}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={isBusy}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                              onClick={() => deleteCampaign(campaign)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
                           </div>
                         </td>
                       </tr>

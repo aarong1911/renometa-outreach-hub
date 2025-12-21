@@ -56,20 +56,11 @@ const DAYS_OF_WEEK = [
 ];
 
 const TIMEZONES = [
-  { value: "America/New_York", label: "Eastern Time (ET)" },
-  { value: "America/Chicago", label: "Central Time (CT)" },
-  { value: "America/Denver", label: "Mountain Time (MT)" },
-  { value: "America/Los_Angeles", label: "Pacific Time (PT)" },
-  { value: "America/Phoenix", label: "Arizona Time" },
-  { value: "America/Anchorage", label: "Alaska Time" },
-  { value: "Pacific/Honolulu", label: "Hawaii Time" },
-  { value: "Europe/London", label: "London (GMT)" },
-  { value: "Europe/Paris", label: "Paris (CET)" },
-  { value: "Asia/Dubai", label: "Dubai" },
-  { value: "Asia/Kolkata", label: "India (IST)" },
-  { value: "Asia/Singapore", label: "Singapore" },
-  { value: "Asia/Tokyo", label: "Tokyo" },
-  { value: "Australia/Sydney", label: "Sydney" },
+  { value: "America/New_York", label: "Eastern Time (EST/EDT)" },
+  { value: "America/Chicago", label: "Central Time (CST/CDT)" },
+  { value: "America/Denver", label: "Mountain Time (MST/MDT)" },
+  { value: "America/Los_Angeles", label: "Pacific Time (PST/PDT)" },
+  { value: "Pacific/Honolulu", label: "Hawaii Time (HST)" },
 ];
 
 export default function CampaignSettings({
@@ -257,7 +248,7 @@ export default function CampaignSettings({
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <Label>Timezone</Label>
+            <Label>Time Zone</Label>
             <Select value={settings.timezone} onValueChange={(v) => setSettings({ ...settings, timezone: v })}>
               <SelectTrigger>
                 <SelectValue />
@@ -290,35 +281,41 @@ export default function CampaignSettings({
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label>Start Hour (24h format)</Label>
-              <Input
-                type="number"
-                min="0"
-                max="23"
-                value={settings.sendingStartHour}
-                onChange={(e) =>
-                  setSettings({ ...settings, sendingStartHour: Number(e.target.value) })
-                }
-              />
-              <p className="text-xs text-slate-500 mt-1">
-                {settings.sendingStartHour}:00 (9 = 9:00 AM)
-              </p>
+              <Label>Start Hour</Label>
+              <Select 
+                value={settings.sendingStartHour.toString()} 
+                onValueChange={(v) => setSettings({ ...settings, sendingStartHour: Number(v) })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 24 }, (_, i) => i).map((hour) => (
+                    <SelectItem key={hour} value={hour.toString()}>
+                      {hour === 0 ? '12:00 AM' : hour < 12 ? `${hour}:00 AM` : hour === 12 ? '12:00 PM' : `${hour - 12}:00 PM`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div>
-              <Label>End Hour (24h format)</Label>
-              <Input
-                type="number"
-                min="0"
-                max="23"
-                value={settings.sendingEndHour}
-                onChange={(e) =>
-                  setSettings({ ...settings, sendingEndHour: Number(e.target.value) })
-                }
-              />
-              <p className="text-xs text-slate-500 mt-1">
-                {settings.sendingEndHour}:00 (17 = 5:00 PM)
-              </p>
+              <Label>End Hour</Label>
+              <Select 
+                value={settings.sendingEndHour.toString()} 
+                onValueChange={(v) => setSettings({ ...settings, sendingEndHour: Number(v) })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 24 }, (_, i) => i).map((hour) => (
+                    <SelectItem key={hour} value={hour.toString()}>
+                      {hour === 0 ? '12:00 AM' : hour < 12 ? `${hour}:00 AM` : hour === 12 ? '12:00 PM' : `${hour - 12}:00 PM`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </CardContent>
