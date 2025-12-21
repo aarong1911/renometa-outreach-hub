@@ -1,4 +1,4 @@
-// netlify/functions/removeListFromCampaign.js
+// netlify/functions/removeAccountFromCampaign.js
 const Airtable = require("airtable");
 const { requireUser } = require("./_lib/auth");
 
@@ -16,28 +16,28 @@ exports.handler = async (event) => {
 
   try {
     const user = await requireUser(event);
-    const { campaignId, listId } = JSON.parse(event.body || "{}");
+    const { campaignId, accountId } = JSON.parse(event.body || "{}");
 
-    if (!campaignId || !listId) {
+    if (!campaignId || !accountId) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: "campaignId and listId are required" }),
+        body: JSON.stringify({ error: "campaignId and accountId are required" }),
       };
     }
 
     const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 
     // Find the link record
-    const allLinks = await base("CampaignLists")
+    const allLinks = await base("CampaignAccounts")
       .select({ pageSize: 100 })
       .all();
 
     const linkToDelete = allLinks.find((r) => {
       if (r.fields.userId !== user.uid) return false;
       const recCampaignId = Array.isArray(r.fields.campaignId) ? r.fields.campaignId[0] : r.fields.campaignId;
-      const recListId = Array.isArray(r.fields.listId) ? r.fields.listId[0] : r.fields.listId;
-      return recCampaignId === campaignId && recListId === listId;
+      const recAccountId = Array.isArray(r.fields.accountId) ? r.fields.accountId[0] : r.fields.accountId;
+      return recCampaignId === campaignId && recAccountId === accountId;
     });
 
     if (!linkToDelete) {
@@ -48,7 +48,7 @@ exports.handler = async (event) => {
       };
     }
 
-    await base("CampaignLists").destroy(linkToDelete.id);
+    await base("CampaignAccounts").destroy(linkToDelete.id);
 
     return {
       statusCode: 200,
@@ -56,11 +56,11 @@ exports.handler = async (event) => {
       body: JSON.stringify({ success: true, id: linkToDelete.id }),
     };
   } catch (error) {
-    console.error("removeListFromCampaign error:", error);
+    console.error("removeAccountFromCampaign error:", error);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: "Failed to remove list", details: error.message }),
+      body: JSON.stringify({ error: "Failed to remove account", details: error.message }),
     };
   }
 };

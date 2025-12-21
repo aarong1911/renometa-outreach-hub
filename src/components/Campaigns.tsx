@@ -1,5 +1,6 @@
 // src/components/Campaigns.tsx
 // Campaign management with integrated Campaign Builder
+/* eslint-disable react-hooks/exhaustive-deps */
 
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "firebase/auth";
@@ -105,7 +106,6 @@ const Campaigns = ({ user }: { user: User }) => {
     loadLeadLists();
     const interval = setInterval(() => loadCampaigns(false), 120000);
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
 
   const loadCampaigns = async (showToast = false) => {

@@ -1,10 +1,7 @@
 // netlify/functions/getCampaignSteps.js
+// Simplified version that filters in JavaScript
 const Airtable = require("airtable");
 const { requireUser } = require("./_lib/auth");
-
-function escapeFormulaString(value) {
-  return String(value || "").replace(/'/g, "\\'");
-}
 
 exports.handler = async (event) => {
   const headers = {
@@ -34,14 +31,19 @@ exports.handler = async (event) => {
       return { statusCode: 403, headers, body: JSON.stringify({ error: "Forbidden" }) };
     }
 
-    const filterByFormula = `ARRAYJOIN({campaignId}) = '${escapeFormulaString(campaignId)}'`;
-
-    const records = await base("CampaignSteps")
+    // Get all steps and filter in JavaScript
+    const allRecords = await base("CampaignSteps")
       .select({
-        filterByFormula,
+        pageSize: 100,
         sort: [{ field: "stepNumber", direction: "asc" }],
       })
       .all();
+
+    // Filter in JavaScript
+    const records = allRecords.filter((r) => {
+      const recCampaignId = Array.isArray(r.fields.campaignId) ? r.fields.campaignId[0] : r.fields.campaignId;
+      return recCampaignId === campaignId;
+    });
 
     const steps = records.map((r) => ({
       id: r.id,

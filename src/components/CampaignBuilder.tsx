@@ -1,4 +1,5 @@
 // src/components/CampaignBuilder.tsx
+/* eslint-disable react-hooks/exhaustive-deps */
 import { useState, useEffect } from "react";
 import type { User } from "firebase/auth";
 import {
@@ -45,7 +46,6 @@ import {
   Eye,
   ChevronLeft,
   FileText,
-  Users,
 } from "lucide-react";
 import { authedFetch } from "@/lib/authedFetch";
 
@@ -228,7 +228,6 @@ export default function CampaignBuilder({
     if (step) {
       setEditingStep(step);
     } else {
-      // New step
       setEditingStep({
         stepNumber: steps.length + 1,
         stepType: steps.length === 0 ? "initial" : "followup",
@@ -252,7 +251,6 @@ export default function CampaignBuilder({
     setSaving(true);
     try {
       if (editingStep.id) {
-        // Update existing
         const res = await authedFetch(user, "/.netlify/functions/updateCampaignStep", {
           method: "POST",
           body: JSON.stringify({
@@ -263,7 +261,6 @@ export default function CampaignBuilder({
         if (!res.ok) throw new Error(await res.text());
         toast.success("Step updated");
       } else {
-        // Create new
         const res = await authedFetch(user, "/.netlify/functions/addCampaignStep", {
           method: "POST",
           body: JSON.stringify({
@@ -317,7 +314,6 @@ export default function CampaignBuilder({
   const renderPreview = () => {
     if (!previewStep) return null;
 
-    // Sample data
     const sampleData = {
       "{{firstName}}": "John",
       "{{lastName}}": "Doe",
@@ -379,8 +375,6 @@ export default function CampaignBuilder({
 
       setAccountDialogOpen(false);
       setSelectedAccountId("");
-      
-      // Reload assigned accounts to update UI
       await loadAssignedAccounts();
     } catch (error) {
       console.error("Error adding account:", error);
@@ -411,12 +405,48 @@ export default function CampaignBuilder({
 
       setListDialogOpen(false);
       setSelectedListId("");
-      
-      // Reload assigned lists to update UI
       await loadAssignedLists();
     } catch (error) {
       console.error("Error adding list:", error);
       toast.error("Failed to add list");
+    }
+  };
+
+  const removeAccount = async (accountId: string) => {
+    if (!confirm("Remove this email account from the campaign?")) return;
+
+    try {
+      const res = await authedFetch(user, "/.netlify/functions/removeAccountFromCampaign", {
+        method: "POST",
+        body: JSON.stringify({ campaignId, accountId }),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+
+      toast.success("Account removed from campaign");
+      await loadAssignedAccounts();
+    } catch (error) {
+      console.error("Error removing account:", error);
+      toast.error("Failed to remove account");
+    }
+  };
+
+  const removeList = async (listId: string) => {
+    if (!confirm("Remove this lead list from the campaign?")) return;
+
+    try {
+      const res = await authedFetch(user, "/.netlify/functions/removeListFromCampaign", {
+        method: "POST",
+        body: JSON.stringify({ campaignId, listId }),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+
+      toast.success("List removed from campaign");
+      await loadAssignedLists();
+    } catch (error) {
+      console.error("Error removing list:", error);
+      toast.error("Failed to remove list");
     }
   };
 
@@ -447,7 +477,6 @@ export default function CampaignBuilder({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Content - Email Sequence */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Email Sequence Steps */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -553,15 +582,25 @@ export default function CampaignBuilder({
               {assignedAccounts.map((account) => (
                 <div
                   key={account.id}
-                  className="flex items-center justify-between p-2 bg-slate-50 rounded"
+                  className="flex items-center justify-between p-2 bg-slate-50 rounded group hover:bg-slate-100 transition-colors"
                 >
-                  <div>
+                  <div className="flex-1">
                     <p className="text-sm font-medium">{account.email}</p>
                     <p className="text-xs text-slate-500">{account.provider}</p>
                   </div>
-                  <Badge variant="outline" className="text-xs">
-                    {account.sentToday}/{account.currentDailyLimit}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-xs">
+                      {account.sentToday}/{account.currentDailyLimit}
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-red-600 hover:text-red-700 hover:bg-red-50"
+                      onClick={() => removeAccount(account.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               ))}
               {assignedAccounts.length === 0 && (
@@ -620,12 +659,20 @@ export default function CampaignBuilder({
               {assignedLists.map((list) => (
                 <div
                   key={list.id}
-                  className="flex items-center justify-between p-2 bg-slate-50 rounded"
+                  className="flex items-center justify-between p-2 bg-slate-50 rounded group hover:bg-slate-100 transition-colors"
                 >
-                  <div>
+                  <div className="flex-1">
                     <p className="text-sm font-medium">{list.name}</p>
                     <p className="text-xs text-slate-500">{(list as any).source || 'manual'}</p>
                   </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-red-600 hover:text-red-700 hover:bg-red-50"
+                    onClick={() => removeList(list.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
                 </div>
               ))}
               {assignedLists.length === 0 && (
@@ -688,7 +735,6 @@ export default function CampaignBuilder({
 
           {editingStep && (
             <div className="space-y-4 py-4">
-              {/* Step Configuration */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Step Number</Label>
@@ -717,7 +763,6 @@ export default function CampaignBuilder({
                 </div>
               </div>
 
-              {/* Template Selection */}
               {templates.length > 0 && (
                 <div>
                   <Label>Apply Template (Optional)</Label>
@@ -739,7 +784,6 @@ export default function CampaignBuilder({
                 </div>
               )}
 
-              {/* Subject */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <Label>Subject</Label>
@@ -767,7 +811,6 @@ export default function CampaignBuilder({
                 />
               </div>
 
-              {/* Body */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <Label>Email Body</Label>
@@ -797,7 +840,6 @@ export default function CampaignBuilder({
                 />
               </div>
 
-              {/* Actions */}
               <div className="flex justify-end gap-2 pt-4">
                 <Button
                   variant="outline"
