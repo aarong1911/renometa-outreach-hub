@@ -7,7 +7,6 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import ProtectedRoute from "./components/ProtectedRoute";
-import Domains from "./components/Domains";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -21,17 +20,7 @@ const App = () => (
           {/* Public landing */}
           <Route path="/" element={<Index />} />
 
-          {/* Protected standalone pages */}
-          <Route
-            path="/domains"
-            element={
-              <ProtectedRoute>
-                {(user) => <Domains user={user} />}
-              </ProtectedRoute>
-            }
-          />
-
-          {/* Protected app routes (Dashboard owns nested routes like /leads/lists) */}
+          {/* Protected app routes (Dashboard owns /dashboard, /domains, /leads/*, etc.) */}
           <Route
             path="/*"
             element={
