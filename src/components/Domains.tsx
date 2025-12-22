@@ -96,6 +96,12 @@ const Domains = ({ user }: { user: User }) => {
   const [searchDomain, setSearchDomain] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
+  
+  // DNS Settings State
+  const [dnsDialogOpen, setDnsDialogOpen] = useState(false);
+  const [selectedDomain, setSelectedDomain] = useState<Domain | null>(null);
+  const [dnsRecords, setDnsRecords] = useState<any[]>([]);
+  const [verifying, setVerifying] = useState(false);
 
   useEffect(() => {
     loadDomains();
@@ -198,11 +204,34 @@ const Domains = ({ user }: { user: User }) => {
     }
   };
 
-  const purchaseDomain = (domain: string) => {
-    // Redirect to Stripe checkout or payment page
-    toast.info("Redirecting to checkout...");
-    // TODO: Implement Stripe integration
-    window.location.href = `/checkout?domain=${domain}`;
+  const purchaseDomain = async (subdomain: string, domain: string) => {
+    if (!confirm(`Purchase ${subdomain}.${domain} for $5/month?`)) return;
+
+    try {
+      const res = await authedFetch(user, "/.netlify/functions/createSubdomainCheckout", {
+        method: "POST",
+        body: JSON.stringify({ subdomain, domain }),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+
+      const data = await res.json();
+
+      // TODO: When Stripe integrated, redirect to checkout
+      // if (data.checkoutUrl) {
+      //   window.location.href = data.checkoutUrl;
+      // }
+
+      // For now, show success and reload
+      toast.success(`${subdomain}.${domain} purchased! Setting up DNS...`);
+      setPurchaseDialogOpen(false);
+      setSearchDomain("");
+      setSearchResults([]);
+      await loadDomains(false);
+    } catch (error) {
+      console.error("Error purchasing subdomain:", error);
+      toast.error("Failed to purchase subdomain");
+    }
   };
 
   const deleteDomain = async (domainId: string, domainName: string) => {
@@ -229,6 +258,51 @@ const Domains = ({ user }: { user: User }) => {
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     toast.success("Copied to clipboard");
+  };
+
+  const openDNSSettings = async (domain: Domain) => {
+    setSelectedDomain(domain);
+    setDnsDialogOpen(true);
+    
+    try {
+      const res = await authedFetch(
+        user,
+        `/.netlify/functions/getDNSRecords?domainId=${domain.id}`
+      );
+      if (!res.ok) throw new Error(await res.text());
+      
+      const data = await res.json();
+      setDnsRecords(data.records || []);
+    } catch (error) {
+      console.error("Error loading DNS records:", error);
+      toast.error("Failed to load DNS records");
+    }
+  };
+
+  const verifyDNS = async () => {
+    if (!selectedDomain) return;
+    
+    setVerifying(true);
+    try {
+      const res = await authedFetch(user, "/.netlify/functions/verifyDomainDNS", {
+        method: "POST",
+        body: JSON.stringify({ domainId: selectedDomain.id }),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+
+      const data = await res.json();
+      toast.success("DNS verification complete");
+      
+      // Reload domains to show updated status
+      await loadDomains(false);
+      setDnsDialogOpen(false);
+    } catch (error) {
+      console.error("Error verifying DNS:", error);
+      toast.error("DNS verification failed - records may not be configured yet");
+    } finally {
+      setVerifying(false);
+    }
   };
 
   const getDNSStatusColor = (status: string) => {
@@ -453,7 +527,7 @@ const Domains = ({ user }: { user: User }) => {
           </DialogContent>
         </Dialog>
 
-        {/* Purchase Domain */}
+        {/* Purchase Subdomain */}
         <Dialog open={purchaseDialogOpen} onOpenChange={setPurchaseDialogOpen}>
           <DialogTrigger asChild>
             <Card className="cursor-pointer hover:shadow-lg transition-shadow border-2 border-dashed">
@@ -462,76 +536,123 @@ const Domains = ({ user }: { user: User }) => {
                   <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
                     <ShoppingCart className="w-6 h-6 text-green-600" />
                   </div>
-                  <h3 className="font-semibold mb-1">Purchase Domain</h3>
-                  <p className="text-sm text-slate-600">Buy a new domain for email</p>
+                  <h3 className="font-semibold mb-1">Purchase Subdomain</h3>
+                  <p className="text-sm text-slate-600">Get a subdomain for $5/month</p>
                 </div>
               </CardContent>
             </Card>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Purchase Domain</DialogTitle>
+              <DialogTitle>Purchase Subdomain</DialogTitle>
               <DialogDescription>
-                Search and purchase a new domain for email sending
+                Choose a subdomain for your email sending - Only $5/month
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4">
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Search for a domain..."
-                  value={searchDomain}
-                  onChange={(e) => setSearchDomain(e.target.value)}
-                  onKeyPress={(e) => e.key === "Enter" && searchAvailableDomains()}
-                />
-                <Button onClick={searchAvailableDomains} disabled={searching}>
-                  {searching ? "Searching..." : "Search"}
-                </Button>
-              </div>
-
-              {searchResults.length > 0 && (
-                <div className="space-y-2">
-                  {searchResults.map((result) => (
-                    <div
-                      key={result.domain}
-                      className="flex items-center justify-between p-3 border rounded"
-                    >
-                      <div>
-                        <p className="font-medium">{result.domain}</p>
-                        <p className="text-sm text-slate-600">
-                          ${result.price}/year
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {result.available ? (
-                          <>
-                            <Badge variant="outline" className="bg-green-50 text-green-700">
-                              Available
-                            </Badge>
-                            <Button
-                              size="sm"
-                              onClick={() => purchaseDomain(result.domain)}
-                            >
-                              Purchase
-                            </Button>
-                          </>
-                        ) : (
-                          <Badge variant="outline" className="bg-red-50 text-red-700">
-                            Taken
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+            <div className="space-y-6">
+              {/* Search for base domain */}
+              <div>
+                <Label>Enter Your Domain</Label>
+                <div className="flex gap-2 mt-2">
+                  <Input
+                    placeholder="yourdomain.com"
+                    value={searchDomain}
+                    onChange={(e) => setSearchDomain(e.target.value)}
+                    onKeyPress={(e) => e.key === "Enter" && searchAvailableDomains()}
+                  />
+                  <Button onClick={searchAvailableDomains} disabled={searching}>
+                    {searching ? "Loading..." : "Show Options"}
+                  </Button>
                 </div>
-              )}
-
-              <div className="bg-slate-50 p-4 rounded">
-                <p className="text-sm text-slate-700">
-                  <strong>💡 Tip:</strong> We'll automatically set up a subdomain (mail.yourdomain.com) 
-                  to protect your main domain reputation.
+                <p className="text-xs text-slate-500 mt-1">
+                  We'll show available subdomains for your domain
                 </p>
               </div>
+
+              {/* Subdomain options */}
+              {searchResults.length > 0 && (
+                <>
+                  <div className="bg-blue-50 p-4 rounded-lg">
+                    <h4 className="font-semibold text-blue-900 mb-2">💡 Why Use a Subdomain?</h4>
+                    <ul className="list-disc list-inside space-y-1 text-sm text-blue-800">
+                      <li>Protects your main domain reputation</li>
+                      <li>If deliverability issues occur, only subdomain is affected</li>
+                      <li>Industry best practice for cold email</li>
+                      <li>Each subdomain is isolated and independently managed</li>
+                    </ul>
+                  </div>
+
+                  <div>
+                    <h4 className="font-semibold mb-3">Available Subdomains for {searchDomain}</h4>
+                    <div className="space-y-3">
+                      {searchResults.map((result) => (
+                        <div
+                          key={result.subdomain}
+                          className="flex items-center justify-between p-4 border rounded-lg hover:shadow-md transition-shadow"
+                        >
+                          <div className="flex-1">
+                            <p className="font-semibold text-lg">
+                              {result.subdomain}.{searchDomain}
+                            </p>
+                            <p className="text-sm text-slate-600 mt-1">
+                              {result.description}
+                            </p>
+                            <div className="flex items-center gap-4 mt-2">
+                              <Badge variant="outline" className="bg-green-50 text-green-700">
+                                ✓ Available
+                              </Badge>
+                              {result.popular && (
+                                <Badge className="bg-blue-500 text-white">
+                                  ⭐ Popular Choice
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-right ml-4">
+                            <p className="text-2xl font-bold text-green-600">$5</p>
+                            <p className="text-xs text-slate-500">per month</p>
+                            <Button
+                              size="sm"
+                              className="mt-2 bg-green-600 hover:bg-green-700"
+                              onClick={() => purchaseDomain(result.subdomain, searchDomain)}
+                            >
+                              <ShoppingCart className="w-4 h-4 mr-2" />
+                              Purchase
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 p-4 rounded-lg">
+                    <h4 className="font-semibold mb-2">What's Included:</h4>
+                    <ul className="space-y-1 text-sm text-slate-700">
+                      <li>✓ Fully managed subdomain</li>
+                      <li>✓ Automatic DNS configuration</li>
+                      <li>✓ SPF, DKIM, DMARC setup</li>
+                      <li>✓ Deliverability monitoring</li>
+                      <li>✓ Domain reputation tracking</li>
+                      <li>✓ 24/7 support</li>
+                    </ul>
+                  </div>
+
+                  <div className="bg-yellow-50 p-4 rounded-lg">
+                    <p className="text-sm text-yellow-900">
+                      <strong>📌 Note:</strong> Your domain ({searchDomain}) must be pointed to our nameservers 
+                      or you must add our DNS records. We'll provide setup instructions after purchase.
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {searchResults.length === 0 && searchDomain && !searching && (
+                <div className="text-center py-8">
+                  <Globe className="w-12 h-12 text-slate-400 mx-auto mb-4" />
+                  <p className="text-slate-600">Enter your domain above to see available subdomains</p>
+                </div>
+              )}
             </div>
           </DialogContent>
         </Dialog>
@@ -644,7 +765,7 @@ const Domains = ({ user }: { user: User }) => {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => toast.info("DNS settings coming soon")}
+                        onClick={() => openDNSSettings(domain)}
                         title="DNS settings"
                       >
                         <Settings className="w-4 h-4" />
@@ -666,6 +787,132 @@ const Domains = ({ user }: { user: User }) => {
           )}
         </CardContent>
       </Card>
+
+      {/* DNS Settings Dialog */}
+      <Dialog open={dnsDialogOpen} onOpenChange={setDnsDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>DNS Settings - {selectedDomain?.fullDomain}</DialogTitle>
+            <DialogDescription>
+              Add these DNS records to your domain registrar to activate email sending
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* Instructions */}
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <h4 className="font-semibold text-blue-900 mb-2">📋 Instructions:</h4>
+              <ol className="list-decimal list-inside space-y-1 text-sm text-blue-800">
+                <li>Go to your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.)</li>
+                <li>Find the DNS or Domain Settings section</li>
+                <li>Add each record below exactly as shown</li>
+                <li>Wait up to 48 hours for DNS propagation</li>
+                <li>Click "Verify DNS" to check configuration</li>
+              </ol>
+            </div>
+
+            {/* DNS Records Table */}
+            {dnsRecords.length > 0 ? (
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-slate-100">
+                    <tr>
+                      <th className="text-left py-3 px-4 font-semibold text-sm">Type</th>
+                      <th className="text-left py-3 px-4 font-semibold text-sm">Name</th>
+                      <th className="text-left py-3 px-4 font-semibold text-sm">Value</th>
+                      <th className="text-left py-3 px-4 font-semibold text-sm">Priority</th>
+                      <th className="text-left py-3 px-4 font-semibold text-sm">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dnsRecords.map((record, index) => (
+                      <tr key={index} className="border-t hover:bg-slate-50">
+                        <td className="py-3 px-4">
+                          <Badge variant="outline">{record.type}</Badge>
+                        </td>
+                        <td className="py-3 px-4">
+                          <code className="text-sm bg-slate-100 px-2 py-1 rounded">
+                            {record.name}
+                          </code>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="max-w-md">
+                            <code className="text-xs bg-slate-100 px-2 py-1 rounded break-all">
+                              {record.value}
+                            </code>
+                            {record.note && (
+                              <p className="text-xs text-slate-500 mt-1">{record.note}</p>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          {record.priority || "-"}
+                        </td>
+                        <td className="py-3 px-4">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => copyToClipboard(record.value)}
+                          >
+                            <Copy className="w-4 h-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-slate-600">Loading DNS records...</p>
+              </div>
+            )}
+
+            {/* Current Status */}
+            {selectedDomain && (
+              <div className="bg-slate-50 p-4 rounded-lg">
+                <h4 className="font-semibold mb-2">Current DNS Status:</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="flex items-center gap-2">
+                    {getDNSStatusIcon(selectedDomain.dns.spf)}
+                    <span className={`text-sm ${getDNSStatusColor(selectedDomain.dns.spf)}`}>
+                      SPF: {selectedDomain.dns.spf}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {getDNSStatusIcon(selectedDomain.dns.dkim)}
+                    <span className={`text-sm ${getDNSStatusColor(selectedDomain.dns.dkim)}`}>
+                      DKIM: {selectedDomain.dns.dkim}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {getDNSStatusIcon(selectedDomain.dns.dmarc)}
+                    <span className={`text-sm ${getDNSStatusColor(selectedDomain.dns.dmarc)}`}>
+                      DMARC: {selectedDomain.dns.dmarc}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {getDNSStatusIcon(selectedDomain.dns.mx)}
+                    <span className={`text-sm ${getDNSStatusColor(selectedDomain.dns.mx)}`}>
+                      MX: {selectedDomain.dns.mx}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex justify-end gap-2 pt-4">
+              <Button variant="outline" onClick={() => setDnsDialogOpen(false)}>
+                Close
+              </Button>
+              <Button onClick={verifyDNS} disabled={verifying}>
+                {verifying ? "Verifying..." : "Verify DNS"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

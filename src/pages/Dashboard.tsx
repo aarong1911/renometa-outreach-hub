@@ -144,7 +144,7 @@ const Dashboard = () => {
         { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, path: "/dashboard" },
         { id: "infrastructure", label: "Infrastructure", icon: Mail, path: "/infrastructure" },
         { id: "domains", label: "Domains", icon: Globe, path: "/domains" },
-        { id: "leads", label: "Leads & Prospects", icon: Users, path: "/leads/lists" }, // default to lists
+        { id: "leads", label: "Leads & Prospects", icon: Users, path: "/leads" },
         { id: "campaigns", label: "Campaigns", icon: Megaphone, path: "/campaigns" },
         { id: "warmup", label: "Warmup Network", icon: Radio, path: "/warmup" },
       ];
