@@ -7,12 +7,21 @@ import {
   createUserWithEmailAndPassword,
   signInWithPopup,
   GoogleAuthProvider,
-  onAuthStateChanged 
+  onAuthStateChanged,
+  sendPasswordResetEmail
 } from "firebase/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Mail, Lock, Loader2, Radio } from "lucide-react";
 import logo from '@/assets/logo.png';
@@ -23,6 +32,12 @@ const Index = () => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [initializing, setInitializing] = useState(true);
+  
+  // Forgot Password State
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [sendingReset, setSendingReset] = useState(false);
+  
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -79,6 +94,11 @@ const Index = () => {
   const handleGoogleSignIn = async () => {
     setLoading(true);
     const provider = new GoogleAuthProvider();
+    
+    // Add these settings for better popup experience
+    provider.setCustomParameters({
+      prompt: 'select_account'
+    });
 
     try {
       await signInWithPopup(auth, provider);
@@ -88,11 +108,44 @@ const Index = () => {
       console.error("Google sign in error:", error);
       if (error.code === "auth/popup-closed-by-user") {
         toast.error("Sign in cancelled");
+      } else if (error.code === "auth/popup-blocked") {
+        toast.error("Popup blocked. Please allow popups for this site.");
+      } else if (error.code === "auth/unauthorized-domain") {
+        toast.error("This domain is not authorized. Please add it to Firebase console.");
       } else {
-        toast.error("Google sign in failed");
+        toast.error("Google sign in failed. Please try again.");
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!resetEmail) {
+      toast.error("Please enter your email address");
+      return;
+    }
+
+    setSendingReset(true);
+
+    try {
+      await sendPasswordResetEmail(auth, resetEmail);
+      toast.success("Password reset email sent! Check your inbox.");
+      setForgotPasswordOpen(false);
+      setResetEmail("");
+    } catch (error: any) {
+      console.error("Password reset error:", error);
+      if (error.code === "auth/user-not-found") {
+        toast.error("No account found with this email address");
+      } else if (error.code === "auth/invalid-email") {
+        toast.error("Invalid email address");
+      } else {
+        toast.error("Failed to send reset email. Please try again.");
+      }
+    } finally {
+      setSendingReset(false);
     }
   };
 
@@ -153,7 +206,68 @@ const Index = () => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password" className="text-slate-200">Password</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password" className="text-slate-200">Password</Label>
+                  {!isSignUp && (
+                    <Dialog open={forgotPasswordOpen} onOpenChange={setForgotPasswordOpen}>
+                      <DialogTrigger asChild>
+                        <button
+                          type="button"
+                          className="text-xs text-[#d9ab57] hover:text-[#c99a46] transition-colors"
+                        >
+                          Forgot password?
+                        </button>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-md bg-slate-800 border-slate-700">
+                        <DialogHeader>
+                          <DialogTitle className="text-white">Reset Password</DialogTitle>
+                          <DialogDescription className="text-slate-400">
+                            Enter your email address and we'll send you a password reset link.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <form onSubmit={handleForgotPassword} className="space-y-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="reset-email" className="text-slate-200">Email</Label>
+                            <div className="relative">
+                              <Mail className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                              <Input
+                                id="reset-email"
+                                type="email"
+                                placeholder="you@example.com"
+                                value={resetEmail}
+                                onChange={(e) => setResetEmail(e.target.value)}
+                                className="pl-10 bg-slate-900/50 border-slate-600 text-white placeholder:text-slate-500"
+                                disabled={sendingReset}
+                              />
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => setForgotPasswordOpen(false)}
+                              className="flex-1 bg-slate-900/50 border-slate-600 text-white hover:bg-slate-700"
+                              disabled={sendingReset}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              type="submit"
+                              className="flex-1 bg-[#d9ab57] hover:bg-[#c99a46] text-white"
+                              disabled={sendingReset}
+                            >
+                              {sendingReset ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                "Send Reset Link"
+                              )}
+                            </Button>
+                          </div>
+                        </form>
+                      </DialogContent>
+                    </Dialog>
+                  )}
+                </div>
                 <div className="relative">
                   <Lock className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
                   <Input
@@ -215,7 +329,7 @@ const Index = () => {
                   d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
                 />
               </svg>
-              Google
+              {loading ? "Signing in..." : "Continue with Google"}
             </Button>
 
             <div className="text-center">
