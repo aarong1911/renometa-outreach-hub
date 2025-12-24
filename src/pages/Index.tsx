@@ -23,7 +23,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Mail, Lock, Loader2, Radio } from "lucide-react";
+import { Mail, Lock, Loader2, Radio, Eye, EyeOff } from "lucide-react";
 import logo from '@/assets/logo.png';
 
 const Index = () => {
@@ -32,6 +32,7 @@ const Index = () => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [initializing, setInitializing] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
   
   // Forgot Password State
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
@@ -171,7 +172,7 @@ const Index = () => {
           </div>
           <div className="flex items-center justify-center gap-2 text-slate-300">
             <Radio className="w-5 h-5 text-[#d9ab57]" />
-            <p className="text-sm">Email Warmup & Campaign Management</p>
+            <p className="text-sm">Email Outreach Campaigns Management</p>
           </div>
         </div>
 
@@ -272,13 +273,26 @@ const Index = () => {
                   <Lock className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
                   <Input
                     id="password"
-                    type="password"
+                    type={showPassword ? "text" : "password"}
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="pl-10 bg-slate-900/50 border-slate-600 text-white placeholder:text-slate-500"
+                    className="pl-10 pr-10 bg-slate-900/50 border-slate-600 text-white placeholder:text-slate-500"
                     disabled={loading}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-300 transition-colors focus:outline-none"
+                    tabIndex={-1}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" strokeWidth={2} />
+                    ) : (
+                      <Eye className="h-4 w-4" strokeWidth={2} />
+                    )}
+                  </button>
                 </div>
               </div>
 
