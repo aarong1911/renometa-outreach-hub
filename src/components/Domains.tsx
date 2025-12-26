@@ -105,6 +105,23 @@ const Domains = ({ user }: { user: User }) => {
 
   useEffect(() => {
     loadDomains();
+    
+    // Handle Stripe redirect success/cancel
+    const urlParams = new URLSearchParams(window.location.search);
+    const success = urlParams.get('success');
+    const canceled = urlParams.get('canceled');
+    const subdomain = urlParams.get('subdomain');
+    
+    if (success === 'true' && subdomain) {
+      toast.success(`${subdomain} purchased! Configure DNS to activate.`);
+      // Clean URL
+      window.history.replaceState({}, '', '/domains');
+    } else if (canceled === 'true') {
+      toast.info('Purchase canceled');
+      // Clean URL
+      window.history.replaceState({}, '', '/domains');
+    }
+    
     const interval = setInterval(() => loadDomains(false), 120000);
     return () => clearInterval(interval);
   }, []);
@@ -217,20 +234,15 @@ const Domains = ({ user }: { user: User }) => {
 
       const data = await res.json();
 
-      // TODO: When Stripe integrated, redirect to checkout
-      // if (data.checkoutUrl) {
-      //   window.location.href = data.checkoutUrl;
-      // }
-
-      // For now, show success and reload
-      toast.success(`${subdomain}.${domain} purchased! Setting up DNS...`);
-      setPurchaseDialogOpen(false);
-      setSearchDomain("");
-      setSearchResults([]);
-      await loadDomains(false);
+      // Redirect to Stripe Checkout
+      if (data.checkoutUrl) {
+        window.location.href = data.checkoutUrl;
+      } else {
+        throw new Error("No checkout URL returned");
+      }
     } catch (error) {
       console.error("Error purchasing subdomain:", error);
-      toast.error("Failed to purchase subdomain");
+      toast.error("Failed to start checkout");
     }
   };
 
@@ -345,7 +357,7 @@ const Domains = ({ user }: { user: User }) => {
         {/* Add Domain */}
         <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
           <DialogTrigger asChild>
-            <Card className="cursor-pointer hover:shadow-lg transition-shadow border-2 border-dashed">
+            <Card className="cursor-pointer hover:shadow-lg transition-shadow">
               <CardContent className="pt-6">
                 <div className="text-center">
                   <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -530,7 +542,7 @@ const Domains = ({ user }: { user: User }) => {
         {/* Purchase Subdomain */}
         <Dialog open={purchaseDialogOpen} onOpenChange={setPurchaseDialogOpen}>
           <DialogTrigger asChild>
-            <Card className="cursor-pointer hover:shadow-lg transition-shadow border-2 border-dashed">
+            <Card className="cursor-pointer hover:shadow-lg transition-shadow">
               <CardContent className="pt-6">
                 <div className="text-center">
                   <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">

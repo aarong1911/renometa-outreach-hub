@@ -1,5 +1,5 @@
 // netlify/functions/createSubdomainCheckout.js
-const Airtable = require("airtable");
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { requireUser } = require("./_lib/auth");
 
 exports.handler = async (event) => {
@@ -28,46 +28,42 @@ exports.handler = async (event) => {
 
     const fullDomain = `${subdomain}.${domain}`;
 
-    // TODO: Integrate with Stripe
-    // For now, add domain directly to Airtable with purchased status
-    
-    const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
-
-    const record = await base("Domains").create({
-      userId: user.uid,
-      domain: domain,
-      subdomain: subdomain,
-      type: "purchased",
-      status: "active",
-      provider: "RenοMeta",
-      spfStatus: "pending",
-      dkimStatus: "pending",
-      dmarcStatus: "pending",
-      mxStatus: "pending",
-      monthlyPrice: 5,
-      purchaseDate: new Date().toISOString(),
-      autoRenew: true,
-      accountsUsing: 0,
+    // Create Stripe Checkout Session
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      payment_method_types: ['card'],
+      line_items: [{
+        price: process.env.STRIPE_SUBDOMAIN_PRICE_ID, // Your $5/month price ID
+        quantity: 1,
+      }],
+      success_url: `${process.env.URL}/domains?success=true&subdomain=${encodeURIComponent(fullDomain)}`,
+      cancel_url: `${process.env.URL}/domains?canceled=true`,
+      customer_email: user.email,
+      client_reference_id: user.uid,
+      metadata: {
+        userId: user.uid,
+        subdomain: subdomain,
+        domain: domain,
+        fullDomain: fullDomain,
+        type: 'subdomain_purchase',
+      },
+      subscription_data: {
+        metadata: {
+          userId: user.uid,
+          subdomain: subdomain,
+          domain: domain,
+          fullDomain: fullDomain,
+        },
+      },
     });
 
-    // TODO: When Stripe is integrated, this should:
-    // 1. Create Stripe checkout session
-    // 2. Return checkout URL
-    // 3. On success webhook, create domain record
-    // 4. Set up DNS automatically
-
-    // For now, simulate success
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
         success: true,
-        domain: {
-          id: record.id,
-          fullDomain,
-          ...record.fields,
-        },
-        // When Stripe integrated: checkoutUrl: session.url
+        checkoutUrl: session.url,
+        sessionId: session.id,
       }),
     };
   } catch (error) {
@@ -75,7 +71,10 @@ exports.handler = async (event) => {
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: "Failed to create checkout", details: error.message }),
+      body: JSON.stringify({ 
+        error: "Failed to create checkout", 
+        details: error.message 
+      }),
     };
   }
 };
