@@ -52,7 +52,7 @@ exports.handler = async (event) => {
         totalSent,
         totalReplies,
         replyRate: replyRate.toFixed(1),
-        sentToday,
+        todaySent: sentToday,
       }),
     };
   } catch (error) {
