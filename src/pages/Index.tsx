@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Mail, Lock, Loader2, Radio, Eye, EyeOff } from "lucide-react";
-import logo from '@/assets/logo.png';
+const logo = "/logo.png";
 
 const Index = () => {
   const [email, setEmail] = useState("");
